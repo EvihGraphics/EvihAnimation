@@ -80,7 +80,7 @@ class MotionBricksReplayApp:
             # Construct a Transform matrix manually or use SetPosition/SetRotation
             transform = Transform.Identity()
             transform[:3, :3] = R
-            transform[3, :3] = p
+            transform[:3, 3] = p
             entity.SetTransform(transform)
 
     def Draw(self):
