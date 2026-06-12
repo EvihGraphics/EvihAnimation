@@ -99,23 +99,6 @@ class MotionBricksReplayApp:
                 transform[:3, :3] = R
                 transform[:3, 3] = p
                 entity.SetTransform(transform)
-            else:
-                # Primitive update
-                c = self.geom_colors[i]
-                color = (int(c[0]), int(c[1]), int(c[2]), int(c[3]))
-                
-                if self.geom_types[i] == 5:
-                    # Cylinders (visual shoulders/elbows)
-                    radius = self.geom_sizes[i, 0]
-                    half_length = self.geom_sizes[i, 1]
-                    local_axis = R[:, 1]
-                    p1 = p - local_axis * half_length
-                    p2 = p + local_axis * half_length
-                    AI4Animation.Draw.Cylinder(p1, p2, radius, radius, color=color)
-                elif self.geom_types[i] == 2:
-                    # Spheres (visual feet components)
-                    radius = self.geom_sizes[i, 0]
-                    AI4Animation.Draw.Sphere(p, size=radius, color=color)
             
         # Update Camera
         frame_idx = self.current_frame
@@ -151,6 +134,27 @@ class MotionBricksReplayApp:
             p2 = positions[parent]
             AI4Animation.Draw.Cylinder(p1, p2, 0.01, 0.01, color=AI4Animation.Color.GREEN)
             AI4Animation.Draw.Sphere(p1, 0.015, color=AI4Animation.Color.RED)
+            
+        # Draw the primitive geoms that don't have meshes
+        for i in range(len(self.mesh_entities)):
+            if self.mesh_entities[i][1] is None:
+                p = self.geom_pos[self.current_frame, i]
+                R = self.geom_rot[self.current_frame, i]
+                c = self.geom_colors[i]
+                color = (int(c[0]), int(c[1]), int(c[2]), int(c[3]))
+                
+                if self.geom_types[i] == 5:
+                    # Cylinders (visual shoulders/elbows)
+                    radius = self.geom_sizes[i, 0]
+                    half_length = self.geom_sizes[i, 1]
+                    local_axis = R[:, 2] # NOTE: MuJoCo cylinders are oriented along the local Z axis!
+                    p1 = p - local_axis * half_length
+                    p2 = p + local_axis * half_length
+                    AI4Animation.Draw.Cylinder(p1, p2, radius, radius, color=color)
+                elif self.geom_types[i] == 2:
+                    # Spheres (visual feet components)
+                    radius = self.geom_sizes[i, 0]
+                    AI4Animation.Draw.Sphere(p, size=radius, color=color)
             
         AI4Animation.Draw.Text(f"Frame: {self.current_frame} / {self.num_frames} (G1 Mesh)", 0.05, 0.05, color=AI4Animation.Color.WHITE)
 
