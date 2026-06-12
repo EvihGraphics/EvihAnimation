@@ -20,6 +20,7 @@ def main():
     cam.distance = 3.0
     cam.elevation = -20
     cam.azimuth = 90
+    print("Camera FOVY:", m.vis.global_.fovy if hasattr(m.vis, 'global_') else "unknown")
     
     pelvis_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "pelvis")
     if pelvis_id == -1: pelvis_id = 1
@@ -35,9 +36,7 @@ def main():
     for i in range(num_frames):
         d.qpos[:] = qpos_seq[i]
         mujoco.mj_forward(m, d)
-        
-        cam.lookat[:] = d.xpos[pelvis_id]
-        
+        cam.lookat[:] = d.subtree_com[1]
         # To get the exact global position of the camera, we update the scene
         mujoco.mjv_updateScene(m, d, vopt, None, cam, mujoco.mjtCatBit.mjCAT_ALL, scn)
         
