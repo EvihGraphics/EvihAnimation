@@ -18,7 +18,8 @@ class Standalone:
         AI4Animation.GUI = Utility.LoadModule(os.path.dirname(__file__) + "/GUI.py")
         AI4Animation.Color = self.Color
         rl.SetConfigFlags(rl.FLAG_MSAA_4X_HINT | rl.FLAG_WINDOW_RESIZABLE)
-        rl.InitWindow(1920, 1080, Utility.ToBytes("AI4AnimationPy"))
+        rl.SetConfigFlags(rl.FLAG_WINDOW_HIDDEN)
+        rl.InitWindow(640, 480, Utility.ToBytes("AI4AnimationPy"))
         self.Camera = AI4Animation.Scene.AddEntity("Camera").AddComponent(
             self.LoadModule("Camera").Camera
         )

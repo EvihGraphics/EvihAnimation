@@ -14,7 +14,7 @@ class Camera(Component):
         self.Camera.projection = rl.CAMERA_PERSPECTIVE
 
         self.Mode = 1  # 0=Free, 1=Fixed, 2=Third, 3=Orbit
-        self.Distance = 5.0
+        self.Distance = 3.0
         self.Target = None
 
     def SetTarget(self, value):

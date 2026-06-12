@@ -76,17 +76,17 @@ void main()
     vec3 skyDir = vec3(0.0, -1.0, 0.0);
     vec3 lightSkyHalf = normalize(-skyDir - eyeDir);
 
-    float sunFactorDiff = max(dot(fragNormal, -lightDir), 0.0);
+    float sunFactorDiff = max(abs(dot(fragNormal, -lightDir)), 0.0);
     float sunFactorSpec = specularity *
         ((glossiness+2.0) / (8.0 * PI)) *
-        pow(max(dot(fragNormal, lightSunHalf), 0.0), glossiness);
+        pow(max(abs(dot(fragNormal, lightSunHalf)), 0.0), glossiness);
 
-    float skyFactorDiff = max(dot(fragNormal, -skyDir), 0.0);
+    float skyFactorDiff = max(abs(dot(fragNormal, -skyDir)), 0.0);
     float skyFactorSpec = specularity *
         ((glossiness+2.0) / (8.0 * PI)) *
-        pow(max(dot(fragNormal, lightSkyHalf), 0.0), glossiness);
+        pow(max(abs(dot(fragNormal, lightSkyHalf)), 0.0), glossiness);
 
-    float groundFactorDiff = max(dot(fragNormal, skyDir), 0.0);
+    float groundFactorDiff = max(abs(dot(fragNormal, skyDir)), 0.0);
     
     // Combine
     

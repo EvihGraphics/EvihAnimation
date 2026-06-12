@@ -3,22 +3,21 @@ import numpy as np
 import os
 import json
 
-def extract_silhouette(frame):
-    # Convert to grayscale
+def extract_silhouette_evih(frame):
+    # Robot is mostly grey/black. Background is RAYWHITE (245) with LIGHTGRAY grid (200).
+    # Any pixel with grayscale value < 180 belongs to the robot.
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    # The background is likely a solid color (e.g., raylib gray or mujoco skybox).
-    # However, mujoco skybox has gradient. We can use a simple threshold or background subtraction.
-    # We will assume pixels with high saturation or low value are foreground, 
-    # but a simpler way is to compare against background frame or just threshold if background is plain.
-    # Actually, we can use Canny edge + morphological close, or simple thresholding if it's mostly gray/white.
-    
-    # Since Evih renders on a plain background, let's just do a basic binary threshold
-    # assuming background is very light or very dark. 
-    # Let's use adaptive thresholding or Otsu's.
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    
-    # Clean up noise
+    _, mask = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY_INV)
     kernel = np.ones((5,5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    return mask
+
+def extract_silhouette_mujoco(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY_INV)
+    kernel = np.ones((5,5), np.uint8)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
     return thresh
 
@@ -52,15 +51,21 @@ def main():
         if not ret1 or not ret2:
             break
             
-        # Ensure sizes match
+        # Ensure sizes match by cropping Evih to 4:3 and scaling MuJoCo
+        h_e, w_e = frame_evih.shape[:2]
+        target_w = int(h_e * 4 / 3)
+        if w_e > target_w:
+            start_x = (w_e - target_w) // 2
+            frame_evih = frame_evih[:, start_x:start_x+target_w]
+            
         if frame_evih.shape != frame_mujoco.shape:
             frame_mujoco = cv2.resize(frame_mujoco, (frame_evih.shape[1], frame_evih.shape[0]))
             
         # Wait, the camera angles might be slightly different. We might just overlay them for visual comparison.
         # IoU might be low if camera is not perfectly matched (FOV, distance, center).
         # We will extract silhouettes and compute IoU anyway.
-        sil_evih = extract_silhouette(frame_evih)
-        sil_mujoco = extract_silhouette(frame_mujoco)
+        sil_evih = extract_silhouette_evih(frame_evih)
+        sil_mujoco = extract_silhouette_mujoco(frame_mujoco)
         
         iou = calculate_iou(sil_evih, sil_mujoco)
         ious.append(iou)

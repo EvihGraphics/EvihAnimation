@@ -191,6 +191,8 @@ class RenderPipeline(Component):
         self.ShadowMap = LoadShadowMap(2560, 1440)
 
         rlSetClipPlanes(0.01, 50.0)
+        import raylib as rl
+        rl.rlDisableBackfaceCulling()
 
     def RegisterModel(
         self,
@@ -398,9 +400,13 @@ class RenderPipeline(Component):
             SHADER_UNIFORM_FLOAT,
         )
         for registered in self.RegisteredModels:
-            registered.Draw(
-                self.SkinnedBasicShader if registered.skinned_mesh else self.GridShader
-            )
+            if registered.skinned_mesh:
+                shader = self.SkinnedBasicShader
+            elif "Ground" in registered.name or "Wall" in registered.name:
+                shader = self.GridShader
+            else:
+                shader = self.BasicShader
+            registered.Draw(shader)
         EndGBuffer(self.ScreenWidth, self.ScreenHeight)
 
     def RenderSSAOShadows(self):

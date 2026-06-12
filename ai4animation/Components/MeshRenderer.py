@@ -6,8 +6,9 @@ from ai4animation.Math import Quaternion, Vector3
 
 class MeshRenderer(Component):
     def Start(self, params):
+        color = params[1] if len(params) > 1 else AI4Animation.Color.RAYWHITE
         self.Model = AI4Animation.Standalone.RenderPipeline.RegisterModel(
-            self.Entity.Name, params[0], None
+            self.Entity.Name, params[0], None, color=color
         )
 
     def Update(self):

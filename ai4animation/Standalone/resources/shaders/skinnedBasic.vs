@@ -38,7 +38,7 @@ void main()
 
     fragPosition = skinnedPosition.xyz / skinnedPosition.w;
     fragTexCoord = vertexTexCoord;
-    fragColor = vertexColor;
+    fragColor = vec4(1.0);
     fragNormal = skinnedNormal;
 
     gl_Position = mvp * vec4(fragPosition, 1.0f);
