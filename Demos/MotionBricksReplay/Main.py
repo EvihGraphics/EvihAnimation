@@ -100,17 +100,22 @@ class MotionBricksReplayApp:
                 transform[:3, 3] = p
                 entity.SetTransform(transform)
             else:
-                # Primitive update (only cylinders = 5 for visual shoulders/elbows)
+                # Primitive update
+                c = self.geom_colors[i]
+                color = (int(c[0]), int(c[1]), int(c[2]), int(c[3]))
+                
                 if self.geom_types[i] == 5:
+                    # Cylinders (visual shoulders/elbows)
                     radius = self.geom_sizes[i, 0]
                     half_length = self.geom_sizes[i, 1]
-                    # In Evih space, the local cylinder axis corresponds to the local Y axis (index 1)
                     local_axis = R[:, 1]
                     p1 = p - local_axis * half_length
                     p2 = p + local_axis * half_length
-                    c = self.geom_colors[i]
-                    color = (int(c[0]), int(c[1]), int(c[2]), int(c[3]))
                     AI4Animation.Draw.Cylinder(p1, p2, radius, radius, color=color)
+                elif self.geom_types[i] == 2:
+                    # Spheres (visual feet components)
+                    radius = self.geom_sizes[i, 0]
+                    AI4Animation.Draw.Sphere(p, size=radius, color=color)
             
         # Update Camera
         frame_idx = self.current_frame
