@@ -16,26 +16,33 @@ m.vis.global_.fovy = 34.0
 vopt = mujoco.MjvOption()
 vopt.geomgroup[0] = 0
 vopt.geomgroup[1] = 1
-renderer.update_scene(d, camera=cam, scene_option=vopt)
-renderer.enable_segmentation_rendering()
-seg = renderer.render()
 
-# MuJoCo seg ID is exactly geom_id
-mask_m = np.zeros_like(seg[:,:,0], dtype=bool)
-for i in range(m.ngeom):
-    if m.geom_group[i] == 1:
-        mask_m = mask_m | ((seg[:,:,0] == i) & (seg[:,:,1] == 5))
+for frame_idx in [10, 50, 100, 200, 290]:
+    d.qpos[:] = q[frame_idx]
+    mujoco.mj_forward(m, d)
 
-# Evih Mask
-mask_e_img = cv2.imread(r'D:\AnimationTech-learning\EvihAnimation-motionbricks-replay\Demos\MotionBricksReplay\frames\frame_0050.png')
-# Background is white (255, 255, 255). Keep everything that is NOT purely white.
-# We also want to exclude the extremely light gray anti-aliasing pixels to match MuJoCo's hard edge.
-mask_e = ((mask_e_img[:,:,0] < 250) | (mask_e_img[:,:,1] < 250) | (mask_e_img[:,:,2] < 250))
+    # Set camera to match Evih
+    cam.distance = 3.0
+    cam.elevation = -20
+    cam.azimuth = 90
+    cam.lookat[:] = d.subtree_com[1]  # Track pelvis
 
-iou = np.sum(mask_m & mask_e) / np.sum(mask_m | mask_e)
-print('FINAL IoU:', iou)
-print('MuJoCo Mask Area:', np.sum(mask_m))
-print('Evih Mask Area:', np.sum(mask_e))
+    renderer.update_scene(d, camera=cam, scene_option=vopt)
+    renderer.enable_segmentation_rendering()
+    seg = renderer.render()
+
+    mask_m = np.zeros((480, 640), dtype=bool)
+    for i in range(m.ngeom):
+        if m.geom_group[i] == 1:
+            mask_m = mask_m | ((seg[:,:,0] == i) & (seg[:,:,1] == 5))
+
+    # Evih Mask
+    mask_e_img = cv2.imread(rf'D:\AnimationTech-learning\EvihAnimation-motionbricks-replay\Demos\MotionBricksReplay\frames\frame_{frame_idx:04d}.png')
+    mask_e = ((mask_e_img[:,:,0] < 250) | (mask_e_img[:,:,1] < 250) | (mask_e_img[:,:,2] < 250))
+
+    iou = np.sum(mask_m & mask_e) / np.sum(mask_m | mask_e)
+    print(f'Frame {frame_idx} IoU:', iou)
+    print(f'  MuJoCo Area:', np.sum(mask_m), 'Evih Area:', np.sum(mask_e))
 
 overlay = np.zeros((480, 640, 3), dtype=np.uint8)
 overlay[mask_m] = [0, 0, 255] # MuJoCo red
