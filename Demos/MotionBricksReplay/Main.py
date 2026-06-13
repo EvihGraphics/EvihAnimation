@@ -62,6 +62,10 @@ class MotionBricksReplayApp:
         
         # We don't need dummy_target if we enforce exact camera position
         self.dummy_target = AI4Animation.Scene.AddEntity("DummyTarget")
+        AI4Animation.Standalone.Camera.Camera.fovy = 34.0
+        
+        # Disable backface culling to ensure all meshes render fully
+        rl.rlDisableBackfaceCulling()
         
         import json
         with open("geom_colors.json", "r") as f:
@@ -73,7 +77,7 @@ class MotionBricksReplayApp:
                 continue
                 
             if mesh_name:
-                obj_path = f"meshes/{mesh_name}.glb"
+                obj_path = f"meshes_mujoco/Geom_{i}.glb"
                 if not os.path.exists(obj_path):
                     print(f"Warning: Mesh {obj_path} not found.")
                     continue

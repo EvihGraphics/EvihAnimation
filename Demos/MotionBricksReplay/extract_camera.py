@@ -49,6 +49,7 @@ def main():
         
     # Now transform these coordinates to Evih space
     def transform_to_evih(points):
+        print('Original points[50]:', points[50])
         evih_points = np.zeros_like(points)
         evih_points[:, 0] = points[:, 1]  # X_e = Y_m
         evih_points[:, 1] = points[:, 2]  # Y_e = Z_m
