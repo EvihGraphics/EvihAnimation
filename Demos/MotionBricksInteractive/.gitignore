@@ -1,0 +1,6 @@
+# Ignore runtime outputs and temporary testing artifacts
+out/
+datasets/
+plot_frames/
+headless_frames/
+*.mp4
