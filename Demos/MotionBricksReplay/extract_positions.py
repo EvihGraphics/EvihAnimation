@@ -32,17 +32,18 @@ def get_mujoco_geom_transforms(qpos_seq, xml_path):
     geom_mesh_names = []
     geom_types = np.zeros(num_geoms, dtype=np.int32)
     geom_sizes = np.zeros((num_geoms, 3), dtype=np.float32)
+    geom_groups = np.zeros(num_geoms, dtype=np.int32)
     
-    for i in range(num_geoms):
-        mesh_id = m.geom_dataid[i]
+    for i in range(m.ngeom):
+        geom_mesh_id = m.geom_dataid[i]
+        if m.geom_type[i] == mujoco.mjtGeom.mjGEOM_MESH and geom_mesh_id != -1:
+            geom_mesh_names.append(mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_MESH, geom_mesh_id))
+        else:
+            geom_mesh_names.append(None)
+        
         geom_types[i] = m.geom_type[i]
         geom_sizes[i] = m.geom_size[i]
-        
-        if m.geom_type[i] == mujoco.mjtGeom.mjGEOM_MESH and mesh_id >= 0:
-            mesh_name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_MESH, mesh_id)
-            geom_mesh_names.append(mesh_name)
-        else:
-            geom_mesh_names.append("")
+        geom_groups[i] = m.geom_group[i]
             
     for i in range(num_frames):
         d.qpos[:] = qpos_seq[i]
@@ -50,7 +51,7 @@ def get_mujoco_geom_transforms(qpos_seq, xml_path):
         positions[i] = d.geom_xpos.copy()
         rotations[i] = d.geom_xmat.copy().reshape(-1, 3, 3)
         
-    return positions, rotations, geom_mesh_names, geom_types, geom_sizes
+    return positions, rotations, geom_mesh_names, geom_types, geom_sizes, geom_groups
 
 def transform_mujoco_to_evih(positions):
     evih_positions = np.zeros_like(positions)
@@ -95,7 +96,7 @@ def main():
     evih_positions = transform_mujoco_to_evih(mj_positions)
     
     # Extract geoms for the mesh view
-    geom_pos, geom_rot, geom_mesh_names, geom_types, geom_sizes = get_mujoco_geom_transforms(qpos_seq, xml_path)
+    geom_pos, geom_rot, geom_mesh_names, geom_types, geom_sizes, geom_groups = get_mujoco_geom_transforms(qpos_seq, xml_path)
     evih_geom_pos, evih_geom_rot = transform_geom_to_evih(geom_pos, geom_rot)
     
     output_dir = r"D:\AnimationTech-learning\EvihAnimation-motionbricks-replay\Demos\MotionBricksReplay"
@@ -105,6 +106,7 @@ def main():
     np.save(os.path.join(output_dir, "evih_geom_rot.npy"), evih_geom_rot)
     np.save(os.path.join(output_dir, "evih_geom_types.npy"), geom_types)
     np.save(os.path.join(output_dir, "evih_geom_sizes.npy"), geom_sizes)
+    np.save(os.path.join(output_dir, "evih_geom_groups.npy"), geom_groups)
     with open(os.path.join(output_dir, "geom_mesh_names.json"), "w") as f:
         json.dump(geom_mesh_names, f)
         

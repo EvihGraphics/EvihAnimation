@@ -22,7 +22,8 @@ class DummyTarget:
         return Transform.GetPosition(self.transform)
 
 class MotionBricksReplayApp:
-    def __init__(self, positions_file, parents_file, auto_record=False):
+    def __init__(self, positions_file, parents_file, auto_record=False, export_mask=False):
+        self.export_mask = export_mask
         self.positions = np.load(positions_file)
         self.parents = np.load(parents_file)
         self.num_frames = self.positions.shape[0]
@@ -32,12 +33,18 @@ class MotionBricksReplayApp:
         self.geom_rot = np.load("evih_geom_rot.npy")
         self.geom_types = np.load("evih_geom_types.npy")
         self.geom_sizes = np.load("evih_geom_sizes.npy")
+        self.geom_groups = np.load("evih_geom_groups.npy")
         with open("geom_mesh_names.json", "r") as f:
             self.geom_mesh_names = json.load(f)
         
         self.cam_pos = np.load("evih_cam_pos.npy")
         self.cam_lookat = np.load("evih_cam_lookat.npy")
         self.cam_up = np.load("evih_cam_up.npy")
+        
+        import pyray as pr
+        self.cam_pos_v = [pr.Vector3(*p) for p in self.cam_pos]
+        self.cam_lookat_v = [pr.Vector3(*p) for p in self.cam_lookat]
+        self.cam_up_v = [pr.Vector3(*p) for p in self.cam_up]
         
         self.current_frame = 0
         self.fps = 30
@@ -61,6 +68,10 @@ class MotionBricksReplayApp:
             self.geom_colors = json.load(f)
             
         for i, mesh_name in enumerate(self.geom_mesh_names):
+            if self.geom_groups[i] != 1:
+                self.mesh_entities.append((i, None))
+                continue
+                
             if mesh_name:
                 obj_path = f"meshes/{mesh_name}.glb"
                 if not os.path.exists(obj_path):
@@ -71,6 +82,8 @@ class MotionBricksReplayApp:
                 entity = AI4Animation.Scene.AddEntity(f"Geom_{i}")
                 c = self.geom_colors[i]
                 color = (int(c[0]), int(c[1]), int(c[2]), int(c[3]))
+                if getattr(self, 'export_mask', False):
+                    color = (0, 0, 0, 255)
                 entity.AddComponent(MeshRenderer, model, color)
                 self.mesh_entities.append((i, entity))
             else:
@@ -83,7 +96,8 @@ class MotionBricksReplayApp:
                 self.current_frame = 0
                 if self.auto_record:
                     print("Encoding MP4 with ffmpeg...")
-                    cmd = ["ffmpeg", "-y", "-framerate", "30", "-i", "frames/frame_%04d.png", "-c:v", "libx264", "-pix_fmt", "yuv420p", "evihanimation_true_mesh_replay.mp4"]
+                    video_name = getattr(self, 'video_name', 'evihanimation_true_mesh_replay.mp4')
+                    cmd = ["ffmpeg", "-y", "-framerate", "30", "-i", "frames/frame_%04d.png", "-c:v", "libx264", "-pix_fmt", "yuv420p", video_name]
                     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     AI4Animation.Standalone.Exit()
 
@@ -112,7 +126,7 @@ class MotionBricksReplayApp:
             dy = self.cam_lookat[frame_idx][1] - self.cam_pos[frame_idx][1]
             dz = self.cam_lookat[frame_idx][2] - self.cam_pos[frame_idx][2]
             length = math.sqrt(dx*dx + dy*dy + dz*dz)
-            if length > 0.001:
+            if length > 0.001 and not getattr(self, 'export_mask_mode', False):
                 AI4Animation.Standalone.RenderPipeline.LightDir = pr.Vector3(dx/length, dy/length, dz/length)
                 pos = AI4Animation.Standalone.RenderPipeline.LightDir
                 AI4Animation.Standalone.RenderPipeline.ShadowLight.position = pr.Vector3(pos.x * -20.0, pos.y * -20.0, pos.z * -20.0)
@@ -120,9 +134,15 @@ class MotionBricksReplayApp:
 
         # Enforce exact MuJoCo camera trajectory
         c = AI4Animation.Standalone.Camera.Camera
-        c.position = tuple(self.cam_pos[self.current_frame])
-        c.target = tuple(self.cam_lookat[self.current_frame])
-        c.up = tuple(self.cam_up[self.current_frame])
+        c.position.x, c.position.y, c.position.z = self.cam_pos[self.current_frame]
+        c.target.x, c.target.y, c.target.z = self.cam_lookat[self.current_frame]
+        c.up.x, c.up.y, c.up.z = self.cam_up[self.current_frame]
+        c.fovy = 34.0
+        
+        if self.current_frame == 50:
+            head_pos_v = pr.Vector3(*np.load('evih_geom_pos.npy')[self.current_frame, 40])
+            screen_pos = rl.GetWorldToScreen(head_pos_v, c)
+            print(f'EVIH FRAME 50 HEAD Y: {screen_pos.y} X: {screen_pos.x}')
 
     def Draw(self):
         positions = self.positions[self.current_frame]
@@ -137,11 +157,16 @@ class MotionBricksReplayApp:
             
         # Draw the primitive geoms that don't have meshes
         for i in range(len(self.mesh_entities)):
+            if self.geom_groups[i] != 1:
+                continue
             if self.mesh_entities[i][1] is None:
                 p = self.geom_pos[self.current_frame, i]
                 R = self.geom_rot[self.current_frame, i]
                 c = self.geom_colors[i]
                 color = (int(c[0]), int(c[1]), int(c[2]), int(c[3]))
+                
+                if getattr(self, 'export_mask', False):
+                    color = AI4Animation.Color.BLACK
                 
                 if self.geom_types[i] == 5:
                     # Cylinders (visual shoulders/elbows)
@@ -156,7 +181,8 @@ class MotionBricksReplayApp:
                     radius = self.geom_sizes[i, 0]
                     AI4Animation.Draw.Sphere(p, size=radius, color=color)
             
-        AI4Animation.Draw.Text(f"Frame: {self.current_frame} / {self.num_frames} (G1 Mesh)", 0.05, 0.05, color=AI4Animation.Color.WHITE)
+        if not getattr(self, 'export_mask_mode', False):
+            AI4Animation.Draw.Text(f"Frame: {self.current_frame} / {self.num_frames} (G1 Mesh)", 0.05, 0.05, color=AI4Animation.Color.WHITE)
 
     def GUI(self):
         if self.auto_record:
@@ -166,9 +192,50 @@ class MotionBricksReplayApp:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--auto-record", action="store_true")
+    parser.add_argument("--export-mask", action="store_true")
     args = parser.parse_args()
     
-    app = MotionBricksReplayApp("evih_positions.npy", "parents.npy", auto_record=args.auto_record)
+    app = MotionBricksReplayApp("evih_positions.npy", "parents.npy", auto_record=args.auto_record, export_mask=args.export_mask)
+    
+    if args.export_mask:
+        app.export_mask_mode = True
+            
+        # We need to hide the grid and background
+        def hide_grid_and_set_bg():
+            rl.rlDisableBackfaceCulling()
+            for entity in AI4Animation.Scene.Entities:
+                if entity.Name.startswith("Ground") or entity.Name.startswith("Wall"):
+                    # Try to remove grid or move entity away
+                    t = Transform.Identity()
+                    t[1, 3] = -1000
+                    entity.SetTransform(t)
+            AI4Animation.Standalone.RenderPipeline.SunStrength = 0.0
+            AI4Animation.Standalone.RenderPipeline.AmbientStrength = 1.0
+            try:
+                AI4Animation.Standalone.RenderPipeline.SkyColor.x = 1.0
+                AI4Animation.Standalone.RenderPipeline.SkyColor.y = 1.0
+                AI4Animation.Standalone.RenderPipeline.SkyColor.z = 1.0
+            except:
+                pass
+            
+        # Hook into Start
+        original_start = app.Start
+        def new_start():
+            original_start()
+            hide_grid_and_set_bg()
+            # Override colors to pure black for the mask
+            for i in range(len(app.geom_colors)):
+                app.geom_colors[i] = [0, 0, 0, 255]
+            for i, entity in app.mesh_entities:
+                if entity:
+                    entity.GetComponent(MeshRenderer).Color = (0, 0, 0, 255)
+        app.Start = new_start
+        
+        # Override output video name
+        app.video_name = "evihanimation_mask_replay.mp4"
+    else:
+        app.video_name = "evihanimation_true_mesh_replay.mp4"
+
     AI4Animation(app)
 
 
