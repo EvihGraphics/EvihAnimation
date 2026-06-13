@@ -1,5 +1,5 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
-from . import Manifolds, Modules, Plotting, Stats
+from . import Manifolds, Modules, Stats
 from .DataSampler import DataSampler
 from .FeedTensor import FeedTensor
 from .ONNXNetwork import ONNXNetwork

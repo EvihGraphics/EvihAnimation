@@ -98,8 +98,16 @@ class InteractiveApp:
 
     def get_raylib_key_states(self):
         # Map Raylib keys to the dictionary expected by WASD_controller
+        w_pressed = rl.IsKeyDown(rl.KEY_W)
+        a_pressed = rl.IsKeyDown(rl.KEY_A)
+        
+        if hasattr(self, 'args') and self.args.auto_record:
+            step = getattr(self, 'current_step', 0)
+            w_pressed = (50 <= step < 300)
+            a_pressed = (150 <= step < 250)
+
         return {
-            "w": rl.IsKeyDown(rl.KEY_W), "a": rl.IsKeyDown(rl.KEY_A),
+            "w": w_pressed, "a": a_pressed,
             "s": rl.IsKeyDown(rl.KEY_S), "d": rl.IsKeyDown(rl.KEY_D),
             "left": rl.IsKeyDown(rl.KEY_LEFT), "right": rl.IsKeyDown(rl.KEY_RIGHT),
             "up": rl.IsKeyDown(rl.KEY_UP), "down": rl.IsKeyDown(rl.KEY_DOWN),
@@ -206,10 +214,13 @@ class InteractiveApp:
         cam.target.x, cam.target.y, cam.target.z = pelvis_pos_e
         
         # Maintain offset relative to target
-        # e.g. distance = 3, slight elevation
         cam.position.x = cam.target.x + 3.0
         cam.position.y = cam.target.y + 1.5
         cam.position.z = cam.target.z
+        
+        if self.args.auto_record:
+            os.makedirs("evih_headless_frames", exist_ok=True)
+            rl.TakeScreenshot(bytes(f"evih_headless_frames/frame_{self.current_step:04d}.png", "utf-8"))
 
     def Draw(self):
         AI4Animation.Draw.Text("MotionBricks Interactive Demo [WASD Control]", 0.05, 0.05, color=AI4Animation.Color.WHITE)
@@ -251,13 +262,11 @@ if __name__ == "__main__":
     parser.add_argument("--max_steps", type=int, default=100000)
     parser.add_argument("--random_seed", type=int, default=1234)
     parser.add_argument("--num_runs", type=int, default=1)
-
-    # Model configurations
     parser.add_argument("--use_qpos", type=int, default=1)
     parser.add_argument("--planner", type=str, default="default")
     parser.add_argument("--allowed_mode", type=str, default=None)
     parser.add_argument("--clips", type=str, default="G1")
-
+    parser.add_argument("--auto_record", action="store_true", help="Auto record headless video")
     args = parser.parse_args()
 
     args.return_model_configs = True

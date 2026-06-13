@@ -4,3 +4,7 @@ datasets/
 plot_frames/
 headless_frames/
 *.mp4
+test_*.py
+evih_headless_frames/
+evih_mesh_frames/
+interactive_*.npy

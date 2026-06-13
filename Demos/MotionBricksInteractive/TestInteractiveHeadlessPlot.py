@@ -104,6 +104,7 @@ def run_test():
     parser.add_argument("--planner", type=str, default="default")
     parser.add_argument("--allowed_mode", type=str, default=None)
     parser.add_argument("--clips", type=str, default="G1")
+    parser.add_argument("--auto_record", action="store_true", help="Auto record headless video")
     args = parser.parse_args([])
     
     args.return_model_configs = True
@@ -125,6 +126,7 @@ def run_test():
     print("Testing 300 frames of inference and recording plot video...")
     
     positions = []
+    full_qpos_history = []
     
     for i in range(300):
         w_pressed = (50 <= i < 300)
@@ -134,10 +136,15 @@ def run_test():
             
         app.Update()
         
-        pelvis_pos = app.demo_agent.mj_data.qpos[:3].copy()
+        full_qpos = app.demo_agent.mj_data.qpos.copy()
+        full_qpos_history.append(full_qpos)
+        
+        pelvis_pos = full_qpos[:3].copy()
         positions.append(pelvis_pos)
         
     positions = np.array(positions)
+    np.save("interactive_qpos.npy", np.array(full_qpos_history))
+    print("Saved interactive_qpos.npy")
     
     # Create Matplotlib Animation
     fig, ax = plt.subplots(figsize=(6, 6))
