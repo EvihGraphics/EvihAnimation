@@ -1,0 +1,153 @@
+{
+  "schema_version": 2,
+  "asset_file": "\\\\wsl.localhost\\Ubuntu-20.04\\root\\Project\\MimicKit\\output\\img\\tmp_white_knight_mesh_reference_20260608_bridge_smoke_v3\\assets\\humanoid_sword_shield.glb",
+  "mesh_binding_pass": true,
+  "compatibility_fallback_used": false,
+  "xml_geom_fallback_used": false,
+  "unbound_renderable_nodes": [],
+  "missing_required_bodies": [],
+  "blocker": "",
+  "binding_mode": "rigid_node",
+  "renderable_bindings": [
+    {
+      "node_index": 1,
+      "node_name": "pelvis",
+      "mode": "rigid_node",
+      "body_name": "pelvis",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 2,
+      "node_name": "torso",
+      "mode": "rigid_node",
+      "body_name": "torso",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 3,
+      "node_name": "head",
+      "mode": "rigid_node",
+      "body_name": "head",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 4,
+      "node_name": "right_upper_arm",
+      "mode": "rigid_node",
+      "body_name": "right_upper_arm",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 5,
+      "node_name": "right_lower_arm",
+      "mode": "rigid_node",
+      "body_name": "right_lower_arm",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 6,
+      "node_name": "right_hand",
+      "mode": "rigid_node",
+      "body_name": "right_hand",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 7,
+      "node_name": "sword",
+      "mode": "rigid_node",
+      "body_name": "sword",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 8,
+      "node_name": "left_upper_arm",
+      "mode": "rigid_node",
+      "body_name": "left_upper_arm",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 9,
+      "node_name": "left_lower_arm",
+      "mode": "rigid_node",
+      "body_name": "left_lower_arm",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 10,
+      "node_name": "shield",
+      "mode": "rigid_node",
+      "body_name": "shield",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 11,
+      "node_name": "left_hand",
+      "mode": "rigid_node",
+      "body_name": "left_hand",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 12,
+      "node_name": "right_thigh",
+      "mode": "rigid_node",
+      "body_name": "right_thigh",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 13,
+      "node_name": "right_shin",
+      "mode": "rigid_node",
+      "body_name": "right_shin",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 14,
+      "node_name": "right_foot",
+      "mode": "rigid_node",
+      "body_name": "right_foot",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 15,
+      "node_name": "left_thigh",
+      "mode": "rigid_node",
+      "body_name": "left_thigh",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 16,
+      "node_name": "left_shin",
+      "mode": "rigid_node",
+      "body_name": "left_shin",
+      "skin_joint_bodies": []
+    },
+    {
+      "node_index": 17,
+      "node_name": "left_foot",
+      "mode": "rigid_node",
+      "body_name": "left_foot",
+      "skin_joint_bodies": []
+    }
+  ],
+  "mapped_bodies": [
+    "head",
+    "left_foot",
+    "left_hand",
+    "left_lower_arm",
+    "left_shin",
+    "left_thigh",
+    "left_upper_arm",
+    "pelvis",
+    "right_foot",
+    "right_hand",
+    "right_lower_arm",
+    "right_shin",
+    "right_thigh",
+    "right_upper_arm",
+    "shield",
+    "sword",
+    "torso"
+  ],
+  "sword_bound": true,
+  "shield_bound": true
+}

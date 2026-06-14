@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "file": "",
+  "required_checks": [
+    "character",
+    "sword",
+    "shield",
+    "pose",
+    "camera",
+    "ground",
+    "lighting",
+    "frame_pairing",
+    "no_obvious_penetration_or_drift"
+  ],
+  "visual_review_pass": false,
+  "blocker": "visual_review_missing_or_failed"
+}

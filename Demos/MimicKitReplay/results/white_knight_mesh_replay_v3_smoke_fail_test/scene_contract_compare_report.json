@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "source_scene_contract_sha256": "25521d11605fd6779d7745329fb4d2ad26d72fa87bc53b7ae35560820f551921",
+  "evih_scene_contract_sha256": "25521d11605fd6779d7745329fb4d2ad26d72fa87bc53b7ae35560820f551921",
+  "computed_scene_contract_sha256": "25521d11605fd6779d7745329fb4d2ad26d72fa87bc53b7ae35560820f551921",
+  "scene_contract_compare_pass": true,
+  "checks": {
+    "schema_v2_or_newer": true,
+    "declared_hash_valid": true,
+    "resolution_match": true,
+    "stride_match": true,
+    "fps_match": true,
+    "frame_ids_match": true,
+    "camera_samples_cover_frames": true
+  },
+  "blocker": ""
+}

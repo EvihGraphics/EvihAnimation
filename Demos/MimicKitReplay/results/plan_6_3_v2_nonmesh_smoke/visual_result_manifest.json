@@ -1,0 +1,143 @@
+{
+  "schema_version": 4,
+  "label": "WalkBrain-v2-smoke",
+  "mimickit_package_dir": "/root/Project/MimicKit/output/train/amp_WalkBrain_dual_newton_hiutil_e1024_20260430_220637/ue_export",
+  "evih_output_dir": "/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke",
+  "package_validation": {
+    "package_dir": "/root/Project/MimicKit/output/train/amp_WalkBrain_dual_newton_hiutil_e1024_20260430_220637/ue_export",
+    "files": {
+      "pose_dof_replay": "/root/Project/MimicKit/output/train/amp_WalkBrain_dual_newton_hiutil_e1024_20260430_220637/ue_export/visual_replay/pose_dof_replay.jsonl",
+      "pose_dof_meta": "/root/Project/MimicKit/output/train/amp_WalkBrain_dual_newton_hiutil_e1024_20260430_220637/ue_export/visual_replay/pose_dof_meta.json",
+      "joint_order": "/root/Project/MimicKit/output/train/amp_WalkBrain_dual_newton_hiutil_e1024_20260430_220637/ue_export/joint_order.json",
+      "source_rig_asset_spec": "/root/Project/MimicKit/output/train/amp_WalkBrain_dual_newton_hiutil_e1024_20260430_220637/ue_export/mimickit_source_rig_asset_spec.json",
+      "visual_alignment_contract": "/root/Project/MimicKit/output/train/amp_WalkBrain_dual_newton_hiutil_e1024_20260430_220637/ue_export/visual_alignment_contract.json"
+    },
+    "hashes": {
+      "pose_dof_replay": "19986edc7926e16ef61ab7aaedad6ab2e03d847cf48624b7c54116fa3ef4c595",
+      "pose_dof_meta": "ff0316c4badd092c4e51bac6c735fcf3a1002bb6ebc493d6cf90bf39d08ddaf5",
+      "joint_order": "d0aca00dd7dabca7c4733aa43dba3ff43429b056d44df3ff8a50cd5333b23fb8",
+      "source_rig_asset_spec": "",
+      "visual_alignment_contract": "7022039880772cfb9f3034b3ea09e3933926b867ad247f8c5f5356399f875aa6"
+    },
+    "missing": [
+      "source_rig_asset_spec"
+    ],
+    "ok": false,
+    "blocker": "mesh_package_sidecars_missing"
+  },
+  "mesh_scope": false,
+  "skeleton_report": {
+    "schema_version": 2,
+    "mode": "skeleton",
+    "mesh_scope": false,
+    "frames_loaded": 300,
+    "source_frame_ids": [
+      0,
+      5
+    ],
+    "png_count": 2,
+    "mp4_file": "/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_skeleton_replay/skeleton_replay.mp4",
+    "mp4_ok": true,
+    "motion_visible": true,
+    "skeleton_replay_pass": true,
+    "character_geom_replay_pass": false,
+    "blocker": "",
+    "media": {
+      "file": "/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_skeleton_replay/skeleton_replay.mp4",
+      "fps": 12,
+      "expected_frame_count": 2,
+      "ok": true,
+      "blocker": "",
+      "command": [
+        "/usr/bin/ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        "/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_skeleton_replay/skeleton_replay.frames.txt",
+        "-r",
+        "12",
+        "-frames:v",
+        "2",
+        "-pix_fmt",
+        "yuv420p",
+        "/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_skeleton_replay/skeleton_replay.mp4"
+      ],
+      "returncode": 0,
+      "stderr_tail": "",
+      "ffprobe": {
+        "codec_name": "h264",
+        "width": 160,
+        "height": 90,
+        "avg_frame_rate": "12/1",
+        "nb_read_frames": "2"
+      },
+      "frame_count": 2,
+      "size_bytes": 2570
+    }
+  },
+  "character_geom_report": {
+    "schema_version": 2,
+    "mode": "character_geom",
+    "mesh_scope": false,
+    "frames_loaded": 300,
+    "source_frame_ids": [
+      0,
+      5
+    ],
+    "png_count": 2,
+    "mp4_file": "/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_character_geom_replay/character_replay.mp4",
+    "mp4_ok": true,
+    "motion_visible": true,
+    "skeleton_replay_pass": true,
+    "character_geom_replay_pass": true,
+    "blocker": "",
+    "media": {
+      "file": "/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_character_geom_replay/character_replay.mp4",
+      "fps": 12,
+      "expected_frame_count": 2,
+      "ok": true,
+      "blocker": "",
+      "command": [
+        "/usr/bin/ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        "/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_character_geom_replay/character_replay.frames.txt",
+        "-r",
+        "12",
+        "-frames:v",
+        "2",
+        "-pix_fmt",
+        "yuv420p",
+        "/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_character_geom_replay/character_replay.mp4"
+      ],
+      "returncode": 0,
+      "stderr_tail": "",
+      "ffprobe": {
+        "codec_name": "h264",
+        "width": 160,
+        "height": 90,
+        "avg_frame_rate": "12/1",
+        "nb_read_frames": "2"
+      },
+      "frame_count": 2,
+      "size_bytes": 2357
+    }
+  },
+  "mesh_report": {},
+  "evih_mesh_replay_pass": false,
+  "mesh_binding_pass": false,
+  "scene_contract_compare_pass": false,
+  "visual_metric_pass": false,
+  "blocker": ""
+}

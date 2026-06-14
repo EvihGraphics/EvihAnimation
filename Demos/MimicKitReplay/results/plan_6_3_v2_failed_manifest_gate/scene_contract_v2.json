@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "root_name": "tmp_white_knight_mesh_reference_20260602_bridge_smoke",
+  "camera_mode": "track",
+  "ground": "mimickit_engine_default_flat_ground",
+  "width": 960,
+  "height": 540,
+  "frames": 10,
+  "frame_stride": 5,
+  "mp4_fps": 12,
+  "expected_frame_ids": [
+    0,
+    5
+  ],
+  "motion_id": "RL_Avatar_Atk_2xCombo01_Motion",
+  "case": "view_motion_humanoid_sword_shield_args",
+  "base_env_config": "/root/Project/MimicKit/data/envs/view_motion_humanoid_sword_shield_mesh_env.yaml",
+  "engine_config": "/root/Project/MimicKit/data/engines/isaac_lab_engine.yaml"
+}

@@ -1,0 +1,5 @@
+file '/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_skeleton_replay/frames/frame_000000.png'
+duration 0.083333333333
+file '/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_skeleton_replay/frames/frame_000005.png'
+duration 0.083333333333
+file '/mnt/d/AnimationTech-learning/EvihAnimation-mimickit-bridge/Demos/MimicKitReplay/results/plan_6_3_v2_nonmesh_smoke/evih_skeleton_replay/frames/frame_000005.png'

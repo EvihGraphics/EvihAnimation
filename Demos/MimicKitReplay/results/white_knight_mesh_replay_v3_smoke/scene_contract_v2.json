@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "root_name": "tmp_white_knight_mesh_reference_20260608_bridge_smoke_v3",
+  "case": "view_motion_humanoid_sword_shield_args.txt",
+  "motion_id": "RL_Avatar_Atk_2xCombo01_Motion",
+  "resolution": {
+    "width": 960,
+    "height": 540
+  },
+  "timing": {
+    "frames": 10,
+    "frame_stride": 5,
+    "fps": 12,
+    "expected_frame_ids": [
+      0,
+      5
+    ]
+  },
+  "seed": 7,
+  "coordinate_system": {
+    "basis": "mimickit_training_xyz",
+    "root_pos_units": "meters",
+    "rotation": "quat_xyzw"
+  },
+  "camera": {
+    "mode": "track",
+    "initial_eye_offset_m": [
+      0.0,
+      -5.0,
+      3.0
+    ],
+    "initial_target_offset_m": [
+      0.0,
+      0.0,
+      1.0
+    ]
+  },
+  "ground": {
+    "kind": "flat_plane",
+    "color_rgb": [
+      0.017,
+      0.0153,
+      0.01275
+    ]
+  },
+  "lights": {
+    "distant": {
+      "intensity": 2000.0,
+      "color_rgb": [
+        0.8,
+        0.8,
+        0.8
+      ]
+    },
+    "dome": {
+      "intensity": 800.0,
+      "color_rgb": [
+        0.7,
+        0.7,
+        0.7
+      ]
+    }
+  },
+  "renderer": "isaac_lab",
+  "color_space": "srgb",
+  "camera_samples": [
+    {
+      "frame": 0,
+      "eye": [
+        0.05132010206580163,
+        -4.986282119527461,
+        3.0000000000000013
+      ],
+      "target": [
+        0.05132010206580163,
+        -4.057805411620495,
+        2.628609366200167
+      ],
+      "fov_degrees": 45.0
+    },
+    {
+      "frame": 5,
+      "eye": [
+        0.026104692369699485,
+        -5.000660686229825,
+        3.000000000000003
+      ],
+      "target": [
+        0.026104692369699485,
+        -4.072183978322859,
+        2.628609366200169
+      ],
+      "fov_degrees": 45.0
+    }
+  ],
+  "scene_contract_sha256": "25521d11605fd6779d7745329fb4d2ad26d72fa87bc53b7ae35560820f551921"
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "hashes": {
+    "pose_dof_replay": {
+      "source_sha256": "057c91e8f40ce12e8d8e2f68490df209c987ce70e59c6b0215061cc2c2a32183",
+      "evih_consumed_sha256": "057c91e8f40ce12e8d8e2f68490df209c987ce70e59c6b0215061cc2c2a32183",
+      "declared_source_hash_present": false,
+      "match": true
+    },
+    "mesh_asset": {
+      "source_sha256": "7124cb0336f841f80ac133cc013a89378379354aedbdc42aeadfe1d9f05635d8",
+      "evih_consumed_sha256": "7124cb0336f841f80ac133cc013a89378379354aedbdc42aeadfe1d9f05635d8",
+      "declared_source_hash_present": true,
+      "match": true
+    },
+    "scene_contract": {
+      "source_sha256": "2a1a75d5e59237f88801388650acce1069827911f168b786906a37df8218131b",
+      "evih_consumed_sha256": "2a1a75d5e59237f88801388650acce1069827911f168b786906a37df8218131b",
+      "computed_sha256": "579a41928cf72710a2c4f3c515c996c8fb10278fc661b3e529b0ed0a59dbce00",
+      "declared_source_hash_present": true,
+      "match": false
+    }
+  },
+  "hash_match_pass": false,
+  "blocker": "source_hash_mismatch"
+}

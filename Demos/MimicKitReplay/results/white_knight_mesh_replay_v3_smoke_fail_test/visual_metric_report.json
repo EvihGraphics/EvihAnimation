@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "requested_thresholds": {
+    "mean_silhouette_iou_min": 0.9,
+    "p10_silhouette_iou_min": 0.8,
+    "mean_centroid_error_max": 0.02,
+    "p95_centroid_error_max": 0.04,
+    "bbox_area_ratio_p10_min": 0.85,
+    "bbox_area_ratio_p90_max": 1.15
+  },
+  "paired_frame_ids": [
+    0,
+    5
+  ],
+  "per_frame": [
+    {
+      "frame_id": 0,
+      "silhouette_iou": 0.07677277716794731,
+      "centroid_error_diagonal_ratio": 0.1531628286062842,
+      "bbox_area_ratio": 7.0716498316498315
+    },
+    {
+      "frame_id": 5,
+      "silhouette_iou": 0.15283544735794324,
+      "centroid_error_diagonal_ratio": 0.08144333554783299,
+      "bbox_area_ratio": 1.4987412335910808
+    }
+  ],
+  "metrics": {
+    "mean_silhouette_iou": 0.11480411226294528,
+    "p10_silhouette_iou": 0.0843790441869469,
+    "mean_centroid_error_diagonal_ratio": 0.11730308207705858,
+    "p95_centroid_error_diagonal_ratio": 0.14957685395336162,
+    "bbox_area_ratio_p10": 2.056032093396956,
+    "bbox_area_ratio_p90": 6.514358971843957,
+    "motion_visible": true
+  },
+  "checks": {
+    "all_requested_frames_paired": true,
+    "mean_silhouette_iou": false,
+    "p10_silhouette_iou": false,
+    "mean_centroid_error": false,
+    "p95_centroid_error": false,
+    "bbox_area_ratio_p10": true,
+    "bbox_area_ratio_p90": false,
+    "motion_visible": true
+  },
+  "visual_metric_pass": false,
+  "blocker": "silhouette_visual_metric_failed"
+}

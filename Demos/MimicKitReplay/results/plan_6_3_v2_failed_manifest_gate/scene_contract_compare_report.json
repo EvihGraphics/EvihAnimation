@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "source_scene_contract_sha256": "",
+  "evih_scene_contract_sha256": "",
+  "computed_scene_contract_sha256": "8ecb1f467aa3f38de044de1583f8dc3e9b3c57a37a3935f5d1e1fad8c8217cf5",
+  "scene_contract_compare_pass": false,
+  "checks": {
+    "schema_v2_or_newer": false,
+    "declared_hash_valid": false,
+    "resolution_match": true,
+    "stride_match": true,
+    "fps_match": true,
+    "frame_ids_match": false,
+    "camera_samples_cover_frames": false
+  },
+  "blocker": "scene_contract_compare_failed"
+}

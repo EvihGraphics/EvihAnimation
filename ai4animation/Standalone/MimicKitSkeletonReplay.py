@@ -826,11 +826,7 @@ def joint_rotation_matrix(joint: JSON, dof_pos: Sequence[float]) -> Mat4:
         if not is_finite_sequence(axis, 3):
             axis = [0.0, 1.0, 0.0]
         R_z = axis_angle_matrix(axis, values[0])
-    
-    # Convert local rotation from Z-up to Y-up
-    rx = axis_angle_matrix([1.0, 0.0, 0.0], math.radians(-90.0))
-    rx_inv = axis_angle_matrix([1.0, 0.0, 0.0], math.radians(90.0))
-    return mat_mul(rx, mat_mul(R_z, rx_inv))
+    return R_z
 
 
 def pose_node_world_matrices(model: MeshModel, row: JSON, joint_order: JSON, source_rig: JSON, binding: JSON, initial_row: JSON) -> tuple[list[Mat4], int]:
@@ -937,6 +933,7 @@ def pose_node_world_matrices(model: MeshModel, row: JSON, joint_order: JSON, sou
         node_original_world = get_original_world(node_idx)
         inv_rest = rigid_inverse(body_rest_world)
         bind_local = mat_mul(node_original_world, inv_rest)
+        
         matrices[node_idx] = mat_mul(bind_local, get_body_world(body_name, row, body_world_cache))
 
         if body_name in joints_by_body and any(int(j.get("dof_dim", 0) or 0) > 0 for j in joints_by_body[body_name]):
@@ -965,15 +962,14 @@ def pose_node_world_matrices(model: MeshModel, row: JSON, joint_order: JSON, sou
             glb_root_offset = (root_orig_world[3][0], root_orig_world[3][1], root_orig_world[3][2])
             break
 
-    print("GLB Root Offset in pose_node_world_matrices:", glb_root_offset)
-    # Add the GLB root offset to all matrices because root_pos_m is the ground projection
+    # Subtract the GLB root offset from all matrices to simulate IsaacLab's USD importer mesh centering
     for i in range(len(matrices)):
         m = matrices[i]
         matrices[i] = (
             m[0],
             m[1],
             m[2],
-            (m[3][0] + float(glb_root_offset[0]), m[3][1] + float(glb_root_offset[1]), m[3][2] + float(glb_root_offset[2]), m[3][3])
+            (m[3][0] - float(glb_root_offset[0]), m[3][1] - float(glb_root_offset[1]), m[3][2] - float(glb_root_offset[2]), m[3][3])
         )
 
     return matrices, mapped_dof_nodes, max_pos_error
@@ -1051,13 +1047,17 @@ def camera_for_frame(contract: JSON, frame_id: int, root: Vec3) -> tuple[Vec3, V
                 eye = sample.get("eye_m", sample.get("eye", []))
                 target = sample.get("target_m", sample.get("target", []))
                 if is_finite_sequence(eye, 3) and is_finite_sequence(target, 3):
-                    vfov = float(sample.get("fov_degrees", contract.get("fov_degrees", 60.0)))
+                    hfov = 90.0
+                    aspect = 960.0 / 540.0
+                    vfov = math.degrees(2.0 * math.atan(math.tan(math.radians(hfov) / 2.0) / aspect))
                     return tuple(float(value) for value in eye), tuple(float(value) for value in target), vfov
     if "camera_eye" in contract and "camera_target" in contract:
         eye = contract["camera_eye"]
         target = contract["camera_target"]
         if is_finite_sequence(eye, 3) and is_finite_sequence(target, 3):
-            vfov = float(contract.get("fov_degrees", 60.0))
+            hfov = 90.0
+            aspect = 960.0 / 540.0
+            vfov = math.degrees(2.0 * math.atan(math.tan(math.radians(hfov) / 2.0) / aspect))
             return tuple(float(value) for value in eye), tuple(float(value) for value in target), vfov
     
     hfov = 60.0
@@ -1428,63 +1428,7 @@ def render_true_mesh(
             missing_rows.append(frame_id)
             continue
             
-        def _zup_to_yup(r: JSON) -> None:
-            pos = r.get("root_pos_m")
-            if pos:
-                r["root_pos_m"] = [float(pos[0]), float(pos[2]), -float(pos[1])]
-            
-            rot = r.get("root_rot_xyzw")
-            if rot:
-                rx = axis_angle_matrix([1.0, 0.0, 0.0], math.radians(-90.0))
-                rx_inv = axis_angle_matrix([1.0, 0.0, 0.0], math.radians(90.0))
-                
-                qx, qy, qz, qw = float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])
-                root_zup = (
-                    (1.0 - 2.0*qy*qy - 2.0*qz*qz, 2.0*qx*qy + 2.0*qz*qw, 2.0*qx*qz - 2.0*qy*qw, 0.0),
-                    (2.0*qx*qy - 2.0*qz*qw, 1.0 - 2.0*qx*qx - 2.0*qz*qz, 2.0*qy*qz + 2.0*qx*qw, 0.0),
-                    (2.0*qx*qz + 2.0*qy*qw, 2.0*qy*qz - 2.0*qx*qw, 1.0 - 2.0*qx*qx - 2.0*qy*qy, 0.0),
-                    (0.0, 0.0, 0.0, 1.0)
-                )
-                
-                root_yup = mat_mul(rx, mat_mul(root_zup, rx_inv))
-                m = root_yup
-                tr = m[0][0] + m[1][1] + m[2][2]
-                if tr > 0:
-                    S = math.sqrt(tr + 1.0) * 2
-                    qw = 0.25 * S
-                    qx = (m[1][2] - m[2][1]) / S
-                    qy = (m[2][0] - m[0][2]) / S
-                    qz = (m[0][1] - m[1][0]) / S
-                elif (m[0][0] > m[1][1]) and (m[0][0] > m[2][2]):
-                    S = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2
-                    qw = (m[1][2] - m[2][1]) / S
-                    qx = 0.25 * S
-                    qy = (m[0][1] + m[1][0]) / S
-                    qz = (m[0][2] + m[2][0]) / S
-                elif m[1][1] > m[2][2]:
-                    S = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2
-                    qw = (m[2][0] - m[0][2]) / S
-                    qx = (m[0][1] + m[1][0]) / S
-                    qy = 0.25 * S
-                    qz = (m[1][2] + m[2][1]) / S
-                else:
-                    S = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2
-                    qw = (m[0][1] - m[1][0]) / S
-                    qx = (m[0][2] + m[2][0]) / S
-                    qy = (m[1][2] + m[2][1]) / S
-                    qz = 0.25 * S
-                r["root_rot_xyzw"] = [qx, qy, qz, qw]
-                
-        # Transform root_pos and root_rot from Z-up to Y-up
-        _zup_to_yup(row)
-        
-        # We also need to transform the initial_row
-        transformed_initial_row = dict(initial_row)
-        transformed_initial_row["root_pos_m"] = list(initial_row.get("root_pos_m", [0, 0, 0]))
-        transformed_initial_row["root_rot_xyzw"] = list(initial_row.get("root_rot_xyzw", [0, 0, 0, 1]))
-        _zup_to_yup(transformed_initial_row)
-
-        triangles, mapped_dof_nodes, frame_pos_error = posed_mesh_triangles(model, row, joint_order, source_rig, binding, transformed_initial_row)
+        triangles, mapped_dof_nodes, frame_pos_error = posed_mesh_triangles(model, row, joint_order, source_rig, binding, initial_row)
         max_body_pos_error_m = max(max_body_pos_error_m, frame_pos_error)
         mesh_triangle_count = max(mesh_triangle_count, len(triangles))
         mapped_dof_node_count = max(mapped_dof_node_count, mapped_dof_nodes)
@@ -1494,8 +1438,8 @@ def render_true_mesh(
             triangles,
             (
                 (1.0, 0.0, 0.0, 0.0),
-                (0.0, 0.0, -1.0, 0.0),
                 (0.0, 1.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0, 0.0),
                 (0.0, 0.0, 0.0, 1.0)
             ),
             width=width,

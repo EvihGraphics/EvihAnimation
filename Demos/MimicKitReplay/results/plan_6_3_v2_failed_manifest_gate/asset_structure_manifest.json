@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "asset_file": "/root/Project/MimicKit/output/img/tmp_white_knight_mesh_reference_20260602_bridge_smoke/assets/humanoid_sword_shield.glb",
+  "asset_sha256": "a11d807d003b8444a4164063a1a670e136c10d7c00e87ac287bde560a6f8f9b1",
+  "asset_size_bytes": 380,
+  "ok": false,
+  "blocker": "mesh_asset_structure_invalid",
+  "node_count": 0,
+  "mesh_count": 0,
+  "primitive_count": 0,
+  "vertex_count": 0,
+  "triangle_count": 0,
+  "buffer_count": 1,
+  "valid_buffers": false,
+  "skin_count": 0,
+  "animation_count": 0,
+  "renderable_node_count": 0,
+  "renderable_node_indices": [],
+  "node_names": [],
+  "mesh_names": [],
+  "required_named_nodes": {
+    "sword": false,
+    "shield": false
+  },
+  "primitive_errors": [],
+  "mesh_mode": ""
+}

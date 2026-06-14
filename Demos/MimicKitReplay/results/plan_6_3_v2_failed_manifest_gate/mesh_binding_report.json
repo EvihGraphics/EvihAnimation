@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "asset_file": "/root/Project/MimicKit/output/img/tmp_white_knight_mesh_reference_20260602_bridge_smoke/assets/humanoid_sword_shield.glb",
+  "mesh_binding_pass": false,
+  "compatibility_fallback_used": false,
+  "xml_geom_fallback_used": false,
+  "unbound_renderable_nodes": [],
+  "missing_required_bodies": [],
+  "blocker": "mesh_asset_structure_invalid"
+}

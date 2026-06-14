@@ -1,0 +1,97 @@
+{
+  "schema_version": 2,
+  "mode": "true_mesh",
+  "mesh_scope": true,
+  "true_mesh_reference_available": true,
+  "mimickit_mesh_reference_manifest": "\\\\wsl.localhost\\Ubuntu-20.04\\root\\Project\\MimicKit\\output\\train\\tmp_white_knight_mesh_reference_20260608_bridge_smoke_v3\\mesh_reference_manifest.json",
+  "mesh_asset": "\\\\wsl.localhost\\Ubuntu-20.04\\root\\Project\\MimicKit\\output\\img\\tmp_white_knight_mesh_reference_20260608_bridge_smoke_v3\\assets\\humanoid_sword_shield.glb",
+  "package_dir": "\\\\wsl.localhost\\Ubuntu-20.04\\root\\Project\\MimicKit\\output\\train\\tmp_white_knight_mesh_reference_20260608_bridge_smoke_v3\\ue_export_mesh_reference",
+  "scene_contract_source": "\\\\wsl.localhost\\Ubuntu-20.04\\root\\Project\\MimicKit\\output\\train\\tmp_white_knight_mesh_reference_20260608_bridge_smoke_v3\\mesh_reference_manifest.json#scene_contract_v2",
+  "source_scene_contract_sha256": "25521d11605fd6779d7745329fb4d2ad26d72fa87bc53b7ae35560820f551921",
+  "evih_scene_contract_sha256": "25521d11605fd6779d7745329fb4d2ad26d72fa87bc53b7ae35560820f551921",
+  "source_hashes": {
+    "pose_dof_replay": {
+      "source_sha256": "687cb24281d295e0e2b816a41fb67a1b0d1a300163eb4d134a19c67832beb615",
+      "evih_consumed_sha256": "687cb24281d295e0e2b816a41fb67a1b0d1a300163eb4d134a19c67832beb615",
+      "declared_source_hash_present": false,
+      "match": true
+    },
+    "mesh_asset": {
+      "source_sha256": "7124cb0336f841f80ac133cc013a89378379354aedbdc42aeadfe1d9f05635d8",
+      "evih_consumed_sha256": "7124cb0336f841f80ac133cc013a89378379354aedbdc42aeadfe1d9f05635d8",
+      "declared_source_hash_present": true,
+      "match": true
+    },
+    "scene_contract": {
+      "source_sha256": "25521d11605fd6779d7745329fb4d2ad26d72fa87bc53b7ae35560820f551921",
+      "evih_consumed_sha256": "25521d11605fd6779d7745329fb4d2ad26d72fa87bc53b7ae35560820f551921",
+      "computed_sha256": "25521d11605fd6779d7745329fb4d2ad26d72fa87bc53b7ae35560820f551921",
+      "declared_source_hash_present": true,
+      "match": true
+    }
+  },
+  "mesh_binding_pass": true,
+  "scene_contract_compare_pass": true,
+  "visual_metric_pass": false,
+  "visual_review_pass": false,
+  "evih_mesh_replay_pass": false,
+  "blocker": "ffmpeg_or_ffprobe_missing",
+  "reports": {
+    "asset_structure": "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\asset_structure_manifest.json",
+    "mesh_binding": "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\mesh_binding_report.json",
+    "scene_contract_compare": "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\scene_contract_compare_report.json",
+    "source_hash_compare": "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\source_hash_compare_report.json",
+    "visual_metric": "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\visual_metric_report.json",
+    "visual_review": "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\visual_review_report.json",
+    "comparison_sheet": "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\mimickit_mesh_vs_evih_mesh_sheet.png"
+  },
+  "row_validation": {
+    "row_count": 10,
+    "dof_size": 31,
+    "all_rows_finite": true,
+    "frames_monotonic": true,
+    "first_frame": 0,
+    "last_frame": 9,
+    "ok": true
+  },
+  "render": {
+    "renderer": "evih_stdlib_glb_triangle_rasterizer_v2",
+    "pose_application_mode": "sidecar_root_and_mapped_joint_dof_glb_pose",
+    "dof_pose_applied": true,
+    "mapped_dof_node_count": 13,
+    "mesh_triangle_count": 14664,
+    "mesh_primitive_count": 17,
+    "requested_frame_ids": [
+      0,
+      5
+    ],
+    "rendered_frame_ids": [
+      0,
+      5
+    ],
+    "rgb_frames": [
+      "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\frames\\frame_000000.png",
+      "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\frames\\frame_000005.png"
+    ],
+    "silhouette_frames": [
+      "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\silhouettes\\frame_000000.png",
+      "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\silhouettes\\frame_000005.png"
+    ],
+    "rgb_png_count": 2,
+    "silhouette_png_count": 2,
+    "missing_replay_rows": [],
+    "render_pass": true
+  },
+  "media": {
+    "file": "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\mesh_replay.mp4",
+    "fps": 12,
+    "expected_frame_count": 2,
+    "ok": false,
+    "blocker": "ffmpeg_or_ffprobe_missing"
+  },
+  "rgb_png_count": 2,
+  "silhouette_png_count": 2,
+  "mp4_file": "D:\\AnimationTech-learning\\EvihAnimation-mimickit-bridge\\Demos\\MimicKitReplay\\results\\white_knight_mesh_replay_v3_smoke_fail_test\\mesh_replay.mp4",
+  "mp4_ok": false,
+  "comparison_sheet_pass": true
+}
