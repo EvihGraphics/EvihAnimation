@@ -263,6 +263,10 @@ class GLB(ModelImporter):
 
         return os.path.splitext(os.path.basename(self._path))[0]
 
+    @property
+    def HasSkin(self) -> bool:
+        return bool(self._glb.skins)
+
     @classmethod
     @lru_cache(maxsize=1)
     def Create(cls, glb_path: str) -> "GLB":
@@ -404,6 +408,24 @@ class GLB(ModelImporter):
             self._nodes[node.Parent].Name if node.Parent is not None else None
             for node in self._nodes
         ]
+
+    @property
+    def NodeNames(self) -> List[str]:
+        return [
+            name if name is not None else f"node_{index}"
+            for index, name in enumerate(self._nodeNames)
+        ]
+
+    @property
+    def NodeParents(self) -> List[str]:
+        return [
+            parent if parent is not None else None
+            for parent in self._nodeParentNames
+        ]
+
+    @property
+    def NodeMatrices(self):
+        return self._nodeGlobalMatrices
 
     @cached_property
     def _nodeGlobalMatrices(self):

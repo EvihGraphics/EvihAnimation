@@ -21,8 +21,9 @@ class AI4Animation:
         STANDALONE = 1
         HEADLESS = 2
         MANUAL = 3
+        CAPTURE = 4
 
-    def __init__(self, program, mode=Mode.STANDALONE, profiler=None):
+    def __init__(self, program, mode=Mode.STANDALONE, profiler=None, capture_options=None):
         AI4Animation.Program = program
         AI4Animation.RunMode = mode
         AI4Animation.Profiler = profiler
@@ -34,10 +35,13 @@ class AI4Animation:
         AI4Animation.Color = None
 
         # Load Standalone
-        if mode == self.Mode.STANDALONE:
+        if mode in (self.Mode.STANDALONE, self.Mode.CAPTURE):
             Utility.LoadModule(
                 os.path.dirname(__file__) + "/Standalone/Standalone.py"
-            ).Standalone()
+            ).Standalone(
+                capture=mode == self.Mode.CAPTURE,
+                **(capture_options or {}),
+            )
 
         # Initialize Scene
         if mode == self.Mode.STANDALONE:
@@ -63,6 +67,8 @@ class AI4Animation:
                 if dt > 0.0:
                     AI4Animation.Update(dt)
         if mode == self.Mode.MANUAL:
+            pass
+        if mode == self.Mode.CAPTURE:
             pass
 
     @staticmethod

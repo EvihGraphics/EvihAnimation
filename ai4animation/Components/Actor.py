@@ -20,13 +20,14 @@ class Actor(Component):
             from ai4animation.Import.GLBImporter import GLB
             self.Model = GLB.Create(model_path)
 
+        self.RigidNodeMode = not bool(getattr(self.Model, "HasSkin", True))
+        self.ModelBoneNames = self.Model.NodeNames if self.RigidNodeMode else self.Model.JointNames
+        self.ModelBoneParents = self.Model.NodeParents if self.RigidNodeMode else self.Model.JointParents
+        self.ModelBoneMatrices = self.Model.NodeMatrices if self.RigidNodeMode else self.Model.JointMatrices
         if bone_names is None:
-            bone_names = self.Model.JointNames
+            bone_names = self.ModelBoneNames
 
         self.Entities = self.CreateEntities()
-
-        if bone_names is None:
-            bone_names = self.Model.JointNames
 
         # create missing nodes on the fly
         self.Bones = []
@@ -221,15 +222,10 @@ class Actor(Component):
         return Transform.GetAxisZ(self.Root)
 
     def SyncToScene(self, bones=None, root=True):
-        if root:
-            self.Entity.SetTransform(self.Root)
-        for bone in self.GetBones(bones):
-            bone.Entity.SetTransform(bone.GetTransform())
-
-        # bones = self.GetBones(bones)
-        # entites = ([self.Entity] + [bone.Entity for bone in bones]) if root else [bone.Entity for bone in bones]
-        # transforms = ([self.Root] + [bone.GetTransform() for bone in bones]) if root else [bone.GetTransform() for bone in bones]
-        # AI4Animation.Scene.SetTransforms(entites, transforms)
+        bones = self.GetBones(bones)
+        entities = ([self.Entity] + [bone.Entity for bone in bones]) if root else [bone.Entity for bone in bones]
+        transforms = ([self.Root] + [bone.GetTransform() for bone in bones]) if root else [bone.GetTransform() for bone in bones]
+        AI4Animation.Scene.SetTransforms(entities, transforms)
 
     def SyncFromScene(self, bones=None, root=True):
         if root:
@@ -342,9 +338,9 @@ class Actor(Component):
 
     def CreateEntities(self):
         names, parents, transforms = (
-            self.Model.JointNames,
-            self.Model.JointParents,
-            self.Model.JointMatrices,
+            self.ModelBoneNames,
+            self.ModelBoneParents,
+            self.ModelBoneMatrices,
         )
 
         self.NameToEntity = {
@@ -366,7 +362,11 @@ class Actor(Component):
             bone.DrawHandle()
 
     def Standalone(self):
-        self.SkinnedMesh = AI4Animation.Standalone.CreateSkinnedMesh(self, self.Model)
+        self.SkinnedMesh = (
+            AI4Animation.Standalone.CreateRigidNodeMesh(self, self.Model)
+            if self.RigidNodeMode
+            else AI4Animation.Standalone.CreateSkinnedMesh(self, self.Model)
+        )
 
         if not self.ShowGUI:
             self.Canvas = None

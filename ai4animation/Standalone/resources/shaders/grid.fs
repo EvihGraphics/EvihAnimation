@@ -11,6 +11,8 @@ uniform float specularity;
 uniform float glossiness;
 uniform float camClipNear;
 uniform float camClipFar;
+uniform float gridSpacing;
+uniform float majorGridSpacing;
 
 layout (location = 0) out vec4 gbufferColor;
 layout (location = 1) out vec4 gbufferNormal;
@@ -54,9 +56,10 @@ float LinearDepth(float depth, float near, float far)
 
 void main()
 {
-    float gridFine = Grid(20.0 * 10.0 * fragTexCoord, 0.025);
-    float gridCoarse = Grid(2.0 * 10.0 * fragTexCoord, 0.02);
-    float check = Checker(2.0 * 10.0 * fragTexCoord);
+    vec2 worldXZ = fragPosition.xz;
+    float gridFine = Grid(worldXZ / max(gridSpacing, 0.0001), 0.025);
+    float gridCoarse = Grid(worldXZ / max(majorGridSpacing, 0.0001), 0.02);
+    float check = Checker(worldXZ / max(gridSpacing, 0.0001));
 
     vec3 albedo = FromGamma(fragColor.xyz * colDiffuse.xyz) * mix(mix(mix(0.9, 0.95, check), 0.85, gridFine), 1.0, gridCoarse);
     float spec = specularity * mix(mix(0.5, 0.75, check), 1.0, gridCoarse);

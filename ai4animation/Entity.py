@@ -38,6 +38,9 @@ class Entity:
             c.GUI()
 
     def SetTransform(self, value, fk=True):
+        if not fk:
+            AI4Animation.AI4Animation.Scene.Transforms[self.Index] = value
+            return
         delta = Transform.TransformationTo(
             AI4Animation.AI4Animation.Scene.Transforms[self.Successors],
             self.GetTransform(),
@@ -48,6 +51,9 @@ class Entity:
         )
 
     def SetPosition(self, value, fk=True):
+        if not fk:
+            AI4Animation.AI4Animation.Scene.Transforms[self.Index, :3, 3] = value
+            return
         delta = Transform.TransformationTo(
             AI4Animation.AI4Animation.Scene.Transforms[self.Successors],
             self.GetTransform(),
@@ -58,6 +64,9 @@ class Entity:
         )
 
     def SetRotation(self, value, fk=True):
+        if not fk:
+            AI4Animation.AI4Animation.Scene.Transforms[self.Index, :3, :3] = value
+            return
         delta = Transform.TransformationTo(
             AI4Animation.AI4Animation.Scene.Transforms[self.Successors],
             self.GetTransform(),
@@ -68,6 +77,10 @@ class Entity:
         )
 
     def SetPositionAndRotation(self, position, rotation, fk=True):
+        if not fk:
+            AI4Animation.AI4Animation.Scene.Transforms[self.Index, :3, 3] = position
+            AI4Animation.AI4Animation.Scene.Transforms[self.Index, :3, :3] = rotation
+            return
         delta = Transform.TransformationTo(
             AI4Animation.AI4Animation.Scene.Transforms[self.Successors],
             self.GetTransform(),

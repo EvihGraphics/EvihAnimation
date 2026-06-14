@@ -29,4 +29,5 @@ class Grid(Component):
             rotationAngle=angle,
             scale=None,
             color=pr.Color(190, 190, 190, 255),
+            grid=True,
         )

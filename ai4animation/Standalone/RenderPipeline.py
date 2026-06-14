@@ -7,7 +7,7 @@ from typing import Any
 
 import cffi
 import numpy as np
-from pyray import Color, Rectangle, RenderTexture, Texture, Vector2, Vector3
+from pyray import Color, Rectangle, RenderTexture, Shader, Texture, Vector2, Vector3
 from raylib import (
     BeginMode3D,
     BeginShaderMode,
@@ -57,6 +57,8 @@ from raylib import (
     rlFrustum,
     rlGetCullDistanceFar,
     rlGetCullDistanceNear,
+    rlGetShaderIdDefault,
+    rlGetShaderLocsDefault,
     rlGetMatrixModelview,
     rlGetMatrixProjection,
     rlLoadFramebuffer,
@@ -137,8 +139,10 @@ class RegisteredModel:
     rotationAngle: float
     scale: Vector3
     color: Color
+    grid: bool
 
-    def Draw(self, shader):
+    def Draw(self, shader, color=None):
+        tint = self.color if color is None else color
         if isinstance(self.model, list):
             for m in self.model:
                 for i in range(m.materialCount):
@@ -149,7 +153,7 @@ class RegisteredModel:
                     self.rotationAxis,
                     self.rotationAngle,
                     self.scale,
-                    self.color,
+                    tint,
                 )
         else:
             for i in range(self.model.materialCount):
@@ -160,7 +164,7 @@ class RegisteredModel:
                 self.rotationAxis,
                 self.rotationAngle,
                 self.scale,
-                self.color,
+                tint,
             )
 
 
@@ -176,10 +180,13 @@ class RenderPipeline(Component):
 
         self.LoadShaders()
 
+        self.GridSpacing = 0.5
+        self.MajorGridSpacing = 5.0
         self.LightDir = Vector3Normalize(Vector3(0.35, -1.0, -0.35))
         self.SunColor = Vector3(253.0 / 255.0, 255.0 / 255.0, 232.0 / 255.0)
         self.SunStrength = 0.25
         self.SkyColor = Vector3(174.0 / 255.0, 183.0 / 255.0, 190.0 / 255.0)
+        self.SkyStrength = 0.15
         self.ShadowLight = ShadowLight()
         self.ShadowLight.target = Vector3(0.0, 0.0, 0.0)
         self.ShadowLight.position = Vector3Scale(self.LightDir, -20.0)
@@ -202,6 +209,7 @@ class RenderPipeline(Component):
         rotationAngle=0.0,
         scale=None,
         color=RAYWHITE,
+        grid=False,
     ):
         if self.HasModel(model):
             print(f"Model {model} is already registered, skipping")
@@ -218,6 +226,7 @@ class RenderPipeline(Component):
             rotationAngle=0.0 if rotationAngle is None else rotationAngle,
             scale=Vector3(1.0, 1.0, 1.0) if scale is None else scale,
             color=color,
+            grid=grid,
         )
 
         self.RegisteredModels.append(registered)
@@ -275,6 +284,20 @@ class RenderPipeline(Component):
         self.RenderBloom()
         self.RenderDebug(debug)
         self.RenderFXAA()
+
+    def RenderSemantic(self, character_model_names, occluder_model_names):
+        characters = set(character_model_names)
+        occluders = set(occluder_model_names)
+        shader = Shader(rlGetShaderIdDefault(), rlGetShaderLocsDefault())
+        ClearBackground(BLACK)
+        BeginMode3D(self.Camera)
+        for registered in self.RegisteredModels:
+            if registered.name in occluders:
+                registered.Draw(shader, BLACK)
+        for registered in self.RegisteredModels:
+            if registered.name in characters:
+                registered.Draw(shader, WHITE)
+        EndMode3D()
 
     def RenderShadowMap(self):
         # Render Shadow Maps
@@ -373,6 +396,22 @@ class RenderPipeline(Component):
             self.ClipFarPtr,
             SHADER_UNIFORM_FLOAT,
         )
+        gridSpacingPtr = ffi.new("float*")
+        gridSpacingPtr[0] = self.GridSpacing
+        SetShaderValue(
+            self.GridShader,
+            self.GridShaderGridSpacing,
+            gridSpacingPtr,
+            SHADER_UNIFORM_FLOAT,
+        )
+        majorGridSpacingPtr = ffi.new("float*")
+        majorGridSpacingPtr[0] = self.MajorGridSpacing
+        SetShaderValue(
+            self.GridShader,
+            self.GridShaderMajorGridSpacing,
+            majorGridSpacingPtr,
+            SHADER_UNIFORM_FLOAT,
+        )
         SetShaderValue(
             self.SkinnedBasicShader,
             self.SkinnedBasicShaderSpecularity,
@@ -398,9 +437,8 @@ class RenderPipeline(Component):
             SHADER_UNIFORM_FLOAT,
         )
         for registered in self.RegisteredModels:
-            registered.Draw(
-                self.SkinnedBasicShader if registered.skinned_mesh else self.GridShader
-            )
+            shader = self.SkinnedBasicShader if registered.skinned_mesh else self.GridShader if registered.grid else self.BasicShader
+            registered.Draw(shader)
         EndGBuffer(self.ScreenWidth, self.ScreenHeight)
 
     def RenderSSAOShadows(self):
@@ -563,7 +601,7 @@ class RenderPipeline(Component):
         sunStrengthPtr = ffi.new("float*")
         sunStrengthPtr[0] = self.SunStrength
         skyStrengthPtr = ffi.new("float*")
-        skyStrengthPtr[0] = 0.15
+        skyStrengthPtr[0] = self.SkyStrength
         groundStrengthPtr = ffi.new("float*")
         groundStrengthPtr[0] = 0.1
         ambientStrengthPtr = ffi.new("float*")
@@ -760,6 +798,10 @@ class RenderPipeline(Component):
         self.GridShaderGlossiness = GetShaderLocation(self.GridShader, b"glossiness")
         self.GridShaderCamClipNear = GetShaderLocation(self.GridShader, b"camClipNear")
         self.GridShaderCamClipFar = GetShaderLocation(self.GridShader, b"camClipFar")
+        self.GridShaderGridSpacing = GetShaderLocation(self.GridShader, b"gridSpacing")
+        self.GridShaderMajorGridSpacing = GetShaderLocation(
+            self.GridShader, b"majorGridSpacing"
+        )
         self.LoadedShaders.append(self.GridShader)
 
         self.LightingShader = LoadShader("post.vs", "lighting.fs")

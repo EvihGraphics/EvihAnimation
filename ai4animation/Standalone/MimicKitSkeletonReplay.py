@@ -55,6 +55,8 @@ REQUIRED_VISUAL_REVIEW_CHECKS = (
     "frame_pairing",
     "no_obvious_penetration_or_drift",
 )
+V3_REQUIRED_FRAME_IDS = tuple(range(0, 300, 5))
+V3_MIN_UNIQUE_DYNAMIC_FRAMES = 6
 
 
 def read_json(path: Path) -> JSON:
@@ -186,6 +188,8 @@ def validate_replay_rows(rows: Sequence[JSON], joint_order: JSON) -> JSON:
 def resolve_package_files(package_dir: Path) -> dict[str, Path]:
     return {
         "pose_dof_replay": package_dir / "visual_replay" / "pose_dof_replay.jsonl",
+        "body_world_replay": package_dir / "visual_replay" / "body_world_replay.jsonl",
+        "body_world_contract": package_dir / "visual_replay" / "body_world_contract.json",
         "pose_dof_meta": package_dir / "visual_replay" / "pose_dof_meta.json",
         "joint_order": package_dir / "joint_order.json",
         "source_rig_asset_spec": package_dir / "mimickit_source_rig_asset_spec.json",
@@ -195,15 +199,50 @@ def resolve_package_files(package_dir: Path) -> dict[str, Path]:
 
 def validate_package_files(package_dir: Path) -> JSON:
     files = resolve_package_files(package_dir)
-    required = ("pose_dof_replay", "pose_dof_meta", "joint_order", "source_rig_asset_spec", "visual_alignment_contract")
+    required = ("pose_dof_replay", "body_world_replay", "body_world_contract", "pose_dof_meta", "joint_order", "source_rig_asset_spec", "visual_alignment_contract")
     missing = [name for name in required if not files[name].is_file()]
+    data_binding = validate_body_world_replay(files) if not missing else {"data_binding_ok": False, "blocker": "body_world_replay_invalid"}
     return {
         "package_dir": str(package_dir),
         "files": {name: str(path) for name, path in files.items()},
         "hashes": {name: sha256_file(path) for name, path in files.items()},
         "missing": missing,
-        "ok": not missing,
-        "blocker": "" if not missing else "mesh_package_sidecars_missing",
+        "data_binding": data_binding,
+        "data_binding_ok": bool(data_binding.get("data_binding_ok")),
+        "ok": not missing and bool(data_binding.get("data_binding_ok")),
+        "blocker": "" if not missing and data_binding.get("data_binding_ok") else ("mesh_package_sidecars_missing" if missing else "body_world_replay_invalid"),
+    }
+
+
+def validate_body_world_replay(files: dict[str, Path]) -> JSON:
+    try:
+        pose_rows = load_replay_rows(files["pose_dof_replay"])
+        body_rows = load_replay_rows(files["body_world_replay"])
+        joint_order = read_json(files["joint_order"])
+    except Exception as exc:
+        return {"data_binding_ok": False, "blocker": "body_world_replay_invalid", "error": f"{type(exc).__name__}: {exc}"}
+    body_order = [str(value) for value in joint_order.get("body_order", [])]
+    pose_frames = [int(row.get("frame", -1)) for row in pose_rows]
+    body_frames = [int(row.get("frame", -1)) for row in body_rows]
+    dimensions_ok = bool(body_order and body_rows) and all(
+        row.get("body_order") == body_order
+        and is_finite_sequence(row.get("body_pos_m"), len(body_order) * 3)
+        and is_finite_sequence(row.get("body_rot_xyzw"), len(body_order) * 4)
+        for row in body_rows
+    )
+    authoritative_source_ok = bool(body_rows) and all(row.get("source") == "canonical_source_rig_fk_v3" for row in body_rows)
+    checks = {
+        "frame_ids_match": bool(pose_frames) and pose_frames == body_frames,
+        "body_order_and_dimensions_match": dimensions_ok,
+        "authoritative_source_is_canonical_source_rig_fk_v3": authoritative_source_ok,
+    }
+    return {
+        "schema_version": 1,
+        "data_binding_ok": all(checks.values()),
+        "checks": checks,
+        "row_count": len(body_rows),
+        "body_count": len(body_order),
+        "blocker": "" if all(checks.values()) else "body_world_replay_invalid",
     }
 
 
@@ -400,19 +439,14 @@ def validate_mesh_binding(path: Path, joint_order: JSON, structure: JSON | None 
 
     mesh_binding_contract = kwargs.get("mesh_binding_contract", {})
     contract_nodes = {node.get("node_name", ""): node for node in mesh_binding_contract.get("nodes", [])}
+    report["contract_mapping_complete"] = bool(contract_nodes)
 
     def match_body(name: str) -> str:
         # Use mesh_binding_contract for exact rigid node matching
         contract_node = contract_nodes.get(name)
         if contract_node:
             return str(contract_node.get("body_binding", ""))
-        # Fallback to heuristics for older bindings without full contract mappings
-        normalized = normalize_name(name)
-        exact = normalized_bodies.get(normalized)
-        if exact:
-            return exact
-        matches = [original for key, original in normalized_bodies.items() if key and key in normalized]
-        return max(matches, key=len) if matches else ""
+        return ""
 
     mapped_bodies: set[str] = set()
     unbound: list[str] = []
@@ -457,6 +491,8 @@ def validate_mesh_binding(path: Path, joint_order: JSON, structure: JSON | None 
         shield_bound="shield" in {name.lower() for name in mapped_bodies},
     )
     report["mesh_binding_pass"] = bool(
+        report["contract_mapping_complete"]
+        and
         not unbound
         and not missing
         and report["sword_bound"]
@@ -475,15 +511,37 @@ def validate_mesh_reference_manifest(manifest: JSON) -> JSON:
     frame_ids = render.get("frame_ids", manifest.get("frame_ids", []))
     expected_ids = render.get("expected_frame_ids", manifest.get("expected_frame_ids", []))
     png_count = int(render.get("image_count", manifest.get("png_count", 0)) or 0)
+    silhouette_count = int(render.get("silhouette_image_count", 0) or 0)
+    ground_mask_count = int(render.get("ground_mask_image_count", 0) or 0)
     expected_count = int(render.get("expected_image_count", manifest.get("expected_image_count", 0)) or 0)
+    scene_contract = manifest.get("scene_contract_v3", {})
+    camera_samples = scene_contract.get("camera_samples", []) if isinstance(scene_contract, dict) else []
+    visual_link_sync_ok = bool(camera_samples) and all(
+        bool(sample.get("visual_link_sync_ok"))
+        and int(sample.get("visual_link_sync_count", 0) or 0) > 0
+        and float(sample.get("visual_link_sync_max_pos_error_m", math.inf)) <= 1e-5
+        and float(sample.get("visual_link_sync_max_rot_error_rad", math.inf)) <= 1e-5
+        for sample in camera_samples
+        if isinstance(sample, dict)
+    ) and len(camera_samples) == expected_count
     checks = [
         (bool(manifest.get("mesh_reference_pass")), "mimickit_mesh_reference_not_passing"),
+        (bool(manifest.get("capture_ok")), "mimickit_capture_gate_failed"),
+        (bool(manifest.get("media_ok")), "mimickit_media_gate_failed"),
+        (bool(manifest.get("asset_ok")), "mimickit_asset_gate_failed"),
+        (bool(manifest.get("package_ok")), "mimickit_package_gate_failed"),
         (str(render.get("visual_kind", "")) == "mesh", "mimickit_reference_not_mesh"),
         (bool(render.get("mesh_detected")), "mimickit_mesh_not_detected"),
         (png_count > 0 and png_count == expected_count, "mimickit_png_sequence_incomplete"),
+        (silhouette_count == expected_count, "mimickit_silhouette_sequence_incomplete"),
+        (ground_mask_count == expected_count, "mimickit_ground_mask_sequence_incomplete"),
         (list(frame_ids or []) == list(expected_ids or []) and bool(frame_ids), "mimickit_frame_ids_mismatch"),
         (bool(render.get("mp4_ok", manifest.get("mp4_ok"))), "mimickit_mp4_invalid"),
         (not bool(render.get("source_was_ppm_only", manifest.get("source_was_ppm_only"))), "ppm_only_output_rejected"),
+        (bool(manifest.get("data_binding_ok")), "body_world_replay_invalid"),
+        (bool(manifest.get("dynamic_sequence_ok")), "mimickit_dynamic_sequence_failed"),
+        (list(frame_ids or []) == list(V3_REQUIRED_FRAME_IDS), "mimickit_dynamic_frame_ids_invalid"),
+        (visual_link_sync_ok, "mimickit_visual_link_sync_failed"),
     ]
     blocker = first_blocker(checks)
     return {
@@ -492,7 +550,11 @@ def validate_mesh_reference_manifest(manifest: JSON) -> JSON:
         "frame_ids": list(frame_ids or []),
         "expected_frame_ids": list(expected_ids or []),
         "png_count": png_count,
+        "silhouette_png_count": silhouette_count,
+        "ground_mask_png_count": ground_mask_count,
         "expected_png_count": expected_count,
+        "dynamic_sequence_ok": bool(manifest.get("dynamic_sequence_ok")),
+        "visual_link_sync_ok": visual_link_sync_ok,
         "checks": {name: passed for passed, name in checks},
     }
 
@@ -537,27 +599,97 @@ def compare_scene_contract(
     declared_hash = str(contract.get("scene_contract_sha256", ""))
     computed_hash = scene_contract_sha256(contract) if contract else ""
     camera_samples = contract.get("camera_samples", [])
-    sample_ids = {
-        int(sample.get("frame", sample.get("frame_id", -1)))
+    valid_samples = [
+        sample
         for sample in camera_samples
         if isinstance(sample, dict)
-    } if isinstance(camera_samples, list) else set()
+        and is_finite_sequence(sample.get("eye_m", sample.get("eye")), 3)
+        and is_finite_sequence(sample.get("target_m", sample.get("target")), 3)
+        and sample.get("fov_degrees") is not None
+        and math.isfinite(float(sample.get("fov_degrees")))
+        and sample.get("fov_axis") in {"horizontal", "vertical"}
+        and sample.get("projection") == "perspective"
+        and math.isfinite(float(sample.get("near", 0.0)))
+        and math.isfinite(float(sample.get("far", 0.0)))
+        and float(sample.get("near", 0.0)) > 0.0
+        and float(sample.get("far", 0.0)) > float(sample.get("near", 0.0))
+        and bool(str(sample.get("renderer_version", "")).strip())
+        and int(sample.get("capture_settle_updates", 0) or 0) > 0
+        and sample.get("visual_link_sync_ok") is True
+        and int(sample.get("visual_link_sync_count", 0) or 0) > 0
+        and math.isfinite(float(sample.get("visual_link_sync_max_pos_error_m", float("inf"))))
+        and math.isfinite(float(sample.get("visual_link_sync_max_rot_error_rad", float("inf"))))
+    ] if isinstance(camera_samples, list) else []
+    sample_ids = {int(sample.get("frame", sample.get("frame_id", -1))) for sample in valid_samples}
     camera_coverage = bool(frame_ids) and all(int(frame) in sample_ids for frame in frame_ids)
+    applied_camera_samples = [
+        {
+            "frame": int(sample.get("frame", sample.get("frame_id", -1))),
+            "eye": list(sample.get("eye_m", sample.get("eye", []))),
+            "target": list(sample.get("target_m", sample.get("target", []))),
+            "fov_degrees": float(sample["fov_degrees"]),
+            "fov_axis": sample["fov_axis"],
+            "projection": sample["projection"],
+            "near": float(sample["near"]),
+            "far": float(sample["far"]),
+            "renderer_version": "evih_stdlib_glb_triangle_rasterizer_v3",
+        }
+        for sample in valid_samples
+    ]
+    required_scene_fields = all(
+        isinstance(contract.get(name), dict)
+        for name in ("resolution", "timing", "source", "coordinate_system", "camera", "ground", "lights", "capture")
+    ) and bool(str(contract.get("renderer", "")).strip()) and contract.get("color_space") == "srgb"
+    lights = contract.get("lights", {}) if isinstance(contract.get("lights"), dict) else {}
+    distant_light = lights.get("distant", {}) if isinstance(lights.get("distant"), dict) else {}
+    distant_light_strict = (
+        is_finite_sequence(distant_light.get("direction_world"), 3)
+        and float(distant_light["direction_world"][2]) < 0.0
+        and distant_light.get("casts_shadows") is True
+    )
+    applied_contract = {
+        "schema_version": 1,
+        "resolution": {"width": width, "height": height},
+        "timing": {"frame_stride": stride, "fps": fps, "expected_frame_ids": list(frame_ids)},
+        "camera": contract.get("camera", {}),
+        "ground": contract.get("ground", {}),
+        "lights": contract.get("lights", {}),
+        "capture": {
+            "mode": "deterministic_offline_rasterizer",
+            "settle_updates_per_attempt": [0],
+            "requires_visual_link_sync": False,
+        },
+        "renderer": "evih_stdlib_glb_triangle_rasterizer_v3",
+        "renderer_settings": {
+            "ground_shadow_opacity": 0.22,
+            "ground_shadow_blur_radius_px": 8,
+            "ground_shadow_blur_passes": 2,
+        },
+        "color_space": contract.get("color_space", ""),
+        "debug_overlays": False,
+        "camera_samples": applied_camera_samples,
+    }
+    applied_hash = stable_json_sha256(applied_contract)
     checks = {
         "schema_v3_or_newer": int(contract.get("schema_version", 0) or 0) >= 3,
         "declared_hash_valid": bool(declared_hash and declared_hash == computed_hash),
+        "required_scene_fields_present": required_scene_fields,
+        "distant_light_strict": distant_light_strict,
         "resolution_match": width == contract_width and height == contract_height,
         "stride_match": stride == contract_stride,
         "fps_match": fps == contract_fps,
         "frame_ids_match": list(frame_ids) == list(expected_ids or []),
         "camera_samples_cover_frames": camera_coverage,
+        "camera_samples_strict": len(valid_samples) == len(frame_ids),
+        "applied_camera_samples_exact": len(applied_camera_samples) == len(frame_ids),
     }
     passed = all(checks.values())
     return {
         "schema_version": 2,
         "source_scene_contract_sha256": declared_hash,
-        "evih_scene_contract_sha256": declared_hash,
+        "evih_scene_contract_sha256": applied_hash,
         "computed_scene_contract_sha256": computed_hash,
+        "applied_scene_contract": applied_contract,
         "scene_contract_compare_pass": passed,
         "checks": checks,
         "blocker": "" if passed else "scene_contract_compare_failed",
@@ -577,6 +709,9 @@ def compare_consumed_hashes(manifest: JSON, package_report: JSON, mesh_asset: Pa
     )
     sidecar_expected = next((value for value in sidecar_expected_values if isinstance(value, str) and len(value) == 64), "")
     sidecar_actual = package_report.get("hashes", {}).get("pose_dof_replay", "")
+    body_expected_values = _recursive_values(manifest, {"body_world_replay_sha256"})
+    body_expected = next((value for value in body_expected_values if isinstance(value, str) and len(value) == 64), "")
+    body_actual = package_report.get("hashes", {}).get("body_world_replay", "")
     scene_expected = str(contract.get("scene_contract_sha256", ""))
     scene_actual = scene_contract_sha256(contract) if contract else ""
     entries = {
@@ -584,7 +719,13 @@ def compare_consumed_hashes(manifest: JSON, package_report: JSON, mesh_asset: Pa
             "source_sha256": sidecar_expected or sidecar_actual,
             "evih_consumed_sha256": sidecar_actual,
             "declared_source_hash_present": bool(sidecar_expected),
-            "match": bool(sidecar_actual and (not sidecar_expected or sidecar_expected == sidecar_actual)),
+            "match": bool(sidecar_expected and sidecar_actual == sidecar_expected),
+        },
+        "body_world_replay": {
+            "source_sha256": body_expected,
+            "evih_consumed_sha256": body_actual,
+            "declared_source_hash_present": bool(body_expected),
+            "match": bool(body_expected and body_actual == body_expected),
         },
         "mesh_asset": {
             "source_sha256": asset_expected,
@@ -594,7 +735,7 @@ def compare_consumed_hashes(manifest: JSON, package_report: JSON, mesh_asset: Pa
         },
         "scene_contract": {
             "source_sha256": scene_expected,
-            "evih_consumed_sha256": scene_expected,
+            "evih_consumed_sha256": scene_actual,
             "computed_sha256": scene_actual,
             "declared_source_hash_present": bool(scene_expected),
             "match": bool(scene_expected and scene_expected == scene_actual),
@@ -666,12 +807,63 @@ def quat_matrix(quaternion: Sequence[float]) -> Mat4:
     x, y, z, w = (float(value) for value in quaternion)
     length = math.sqrt(x * x + y * y + z * z + w * w) or 1.0
     x, y, z, w = x / length, y / length, z / length, w / length
+    # All transforms in this renderer use row vectors. This is the transpose
+    # of the common column-vector quaternion matrix.
     return (
-        (1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w), 0.0),
-        (2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w), 0.0),
-        (2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y), 0.0),
+        (1 - 2 * (y * y + z * z), 2 * (x * y + z * w), 2 * (x * z - y * w), 0.0),
+        (2 * (x * y - z * w), 1 - 2 * (x * x + z * z), 2 * (y * z + x * w), 0.0),
+        (2 * (x * z + y * w), 2 * (y * z - x * w), 1 - 2 * (x * x + y * y), 0.0),
         (0.0, 0.0, 0.0, 1.0),
     )
+
+
+def quat_normalize_xyzw(quaternion: Sequence[float]) -> tuple[float, float, float, float]:
+    x, y, z, w = (float(value) for value in quaternion)
+    length = math.sqrt(x * x + y * y + z * z + w * w) or 1.0
+    return x / length, y / length, z / length, w / length
+
+
+def quat_mul_xyzw(left: Sequence[float], right: Sequence[float]) -> tuple[float, float, float, float]:
+    x1, y1, z1, w1 = (float(value) for value in left)
+    x2, y2, z2, w2 = (float(value) for value in right)
+    return (
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+    )
+
+
+def quat_rotate_vec(quaternion: Sequence[float], vector: Sequence[float]) -> Vec3:
+    x, y, z, w = (float(value) for value in quaternion)
+    vx, vy, vz = (float(value) for value in vector)
+    tx = 2.0 * (y * vz - z * vy)
+    ty = 2.0 * (z * vx - x * vz)
+    tz = 2.0 * (x * vy - y * vx)
+    return (
+        vx + w * tx + (y * tz - z * ty),
+        vy + w * ty + (z * tx - x * tz),
+        vz + w * tz + (x * ty - y * tx),
+    )
+
+
+def joint_rotation_quaternion(joint: JSON, dof_pos: Sequence[float]) -> tuple[float, float, float, float]:
+    start = int(joint.get("dof_index", 0))
+    dimension = int(joint.get("dof_dim", 0))
+    values = [float(value) for value in dof_pos[start : start + dimension]]
+    if dimension == 3 and str(joint.get("joint_type", "")).lower() == "spherical":
+        angle = math.sqrt(sum(value * value for value in values))
+        if angle > 1e-12:
+            scale = math.sin(angle * 0.5) / angle
+            return quat_normalize_xyzw((values[0] * scale, values[1] * scale, values[2] * scale, math.cos(angle * 0.5)))
+    elif dimension == 1:
+        axis = joint.get("axis_xyz", joint.get("axis", [0.0, 1.0, 0.0]))
+        if is_finite_sequence(axis, 3):
+            ax, ay, az = _normalize((float(axis[0]), float(axis[1]), float(axis[2])))
+            half = values[0] * 0.5
+            sine = math.sin(half)
+            return quat_normalize_xyzw((ax * sine, ay * sine, az * sine, math.cos(half)))
+    return 0.0, 0.0, 0.0, 1.0
 
 
 def trs_matrix(node: JSON) -> Mat4:
@@ -730,10 +922,10 @@ def _material_color(document: JSON, primitive: JSON) -> tuple[int, int, int]:
     material_index = primitive.get("material")
     materials = document.get("materials", [])
     if not isinstance(material_index, int) or not (0 <= material_index < len(materials)):
-        return 190, 195, 205
+        return 220, 220, 220
     material = materials[material_index]
     pbr = material.get("pbrMetallicRoughness", {}) if isinstance(material, dict) else {}
-    factor = pbr.get("baseColorFactor", [0.75, 0.77, 0.8, 1.0]) if isinstance(pbr, dict) else [0.75, 0.77, 0.8, 1.0]
+    factor = pbr.get("baseColorFactor", [0.86, 0.86, 0.86, 1.0]) if isinstance(pbr, dict) else [0.86, 0.86, 0.86, 1.0]
     return tuple(max(0, min(255, round(float(factor[index]) * 255))) for index in range(3))
 
 
@@ -822,18 +1014,15 @@ def joint_rotation_matrix(joint: JSON, dof_pos: Sequence[float]) -> Mat4:
         if angle > 1e-12:
             R_z = axis_angle_matrix(values, angle)
     elif len(values) == 1:
-        axis = joint.get("axis", [0.0, 1.0, 0.0])
+        axis = joint.get("axis_xyz", joint.get("axis", [0.0, 1.0, 0.0]))
         if not is_finite_sequence(axis, 3):
             axis = [0.0, 1.0, 0.0]
         R_z = axis_angle_matrix(axis, values[0])
     
-    # Convert local rotation from Z-up to Y-up
-    rx = axis_angle_matrix([1.0, 0.0, 0.0], math.radians(-90.0))
-    rx_inv = axis_angle_matrix([1.0, 0.0, 0.0], math.radians(90.0))
-    return mat_mul(rx, mat_mul(R_z, rx_inv))
+    return R_z
 
 
-def pose_node_world_matrices(model: MeshModel, row: JSON, joint_order: JSON, source_rig: JSON, binding: JSON, initial_row: JSON) -> tuple[list[Mat4], int]:
+def pose_node_world_matrices(model: MeshModel, row: JSON, joint_order: JSON, source_rig: JSON, binding: JSON, initial_row: JSON) -> tuple[list[Mat4], int, float, float]:
     # 1. Compute Body World Transforms from source_rig + row
     flat_bodies = source_rig.get("flat_bodies", [])
     body_by_name = {body["name"]: body for body in flat_bodies}
@@ -863,59 +1052,58 @@ def pose_node_world_matrices(model: MeshModel, row: JSON, joint_order: JSON, sou
         original_cache[node_index] = world
         return world
 
-    body_world_cache: dict[str, Mat4] = {}
+    body_world_cache: dict[tuple[int, str], Mat4] = {}
+    body_state_caches: dict[int, dict[str, tuple[Vec3, tuple[float, float, float, float]]]] = {}
     
-    def get_body_world(body_name: str, target_row: JSON, cache: dict[str, Mat4]) -> Mat4:
-        if body_name in cache:
-            return cache[body_name]
+    def get_body_state(body_name: str, target_row: JSON) -> tuple[Vec3, tuple[float, float, float, float]]:
+        state_cache = body_state_caches.setdefault(id(target_row), {})
+        if body_name in state_cache:
+            return state_cache[body_name]
         body = body_by_name.get(body_name)
         if not body:
-            return identity_matrix()
+            return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)
             
         parent_name = body.get("parent", "")
         if not parent_name:
             root_pos = target_row.get("root_pos_m", [0.0, 0.0, 0.0])
-            local_pos = body.get("pos", [0.0, 0.0, 0.0])
             root_rot = target_row.get("root_rot_xyzw", [0.0, 0.0, 0.0, 1.0])
-            
-            # Use raw root_pos_m since it's the absolute position of the articulation root
-            world = (
-                (1.0 - 2.0 * (root_rot[1] ** 2 + root_rot[2] ** 2), 2.0 * (root_rot[0] * root_rot[1] + root_rot[2] * root_rot[3]), 2.0 * (root_rot[0] * root_rot[2] - root_rot[1] * root_rot[3]), 0.0),
-                (2.0 * (root_rot[0] * root_rot[1] - root_rot[2] * root_rot[3]), 1.0 - 2.0 * (root_rot[0] ** 2 + root_rot[2] ** 2), 2.0 * (root_rot[1] * root_rot[2] + root_rot[0] * root_rot[3]), 0.0),
-                (2.0 * (root_rot[0] * root_rot[2] + root_rot[1] * root_rot[3]), 2.0 * (root_rot[1] * root_rot[2] - root_rot[0] * root_rot[3]), 1.0 - 2.0 * (root_rot[0] ** 2 + root_rot[1] ** 2), 0.0),
-                (float(root_pos[0]), float(root_pos[1]), float(root_pos[2]), 1.0)
+            state = (
+                (float(root_pos[0]), float(root_pos[1]), float(root_pos[2])),
+                quat_normalize_xyzw(root_rot),
             )
-            cache[body_name] = world
-            return world
+            state_cache[body_name] = state
+            return state
             
-        parent_world = get_body_world(parent_name, target_row, cache)
-        node_idx = body_name_to_node_idx.get(body_name)
-        parent_node_idx = body_name_to_node_idx.get(parent_name)
-        
-        local_pos = body.get("pos", [0.0, 0.0, 0.0])
-        local_rest = (
-            (1.0, 0.0, 0.0, 0.0),
-            (0.0, 1.0, 0.0, 0.0),
-            (0.0, 0.0, 1.0, 0.0),
-            (float(local_pos[0]), float(local_pos[1]), float(local_pos[2]), 1.0)
+        parent_pos, parent_rot = get_body_state(parent_name, target_row)
+        body_joints = joints_by_body.get(body_name, [])
+        primary_joint = body_joints[0] if body_joints else {}
+        local_pos = primary_joint.get(
+            "bind_local_translation_m",
+            body.get("bind_local_translation_m", body.get("pos", [0.0, 0.0, 0.0])),
         )
-        
-        if not parent_name:
-            local_rest = (
-                local_rest[0],
-                local_rest[1],
-                local_rest[2],
-                (0.0, 0.0, 0.0, 1.0)
-            )
-            
-        joint_rot = identity_matrix()
-        if body_name in joints_by_body:
-            for joint in joints_by_body[body_name]:
-                joint_rot = mat_mul(joint_rot, joint_rotation_matrix(joint, target_row.get("dof_pos", [])))
-                
-        local_transform = mat_mul(joint_rot, local_rest)
-        world = mat_mul(local_transform, parent_world)
-        cache[body_name] = world
+        local_rot = primary_joint.get(
+            "bind_local_rotation_xyzw",
+            body.get("bind_local_rotation_xyzw", [0.0, 0.0, 0.0, 1.0]),
+        )
+        joint_rot: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
+        for joint in body_joints:
+            joint_rot = quat_mul_xyzw(joint_rot, joint_rotation_quaternion(joint, target_row.get("dof_pos", [])))
+        offset = quat_rotate_vec(parent_rot, local_pos)
+        current_pos = (parent_pos[0] + offset[0], parent_pos[1] + offset[1], parent_pos[2] + offset[2])
+        current_rot = quat_mul_xyzw(parent_rot, quat_mul_xyzw(local_rot, joint_rot))
+        state = current_pos, current_rot
+        state_cache[body_name] = state
+        return state
+
+    def get_body_world(body_name: str, target_row: JSON) -> Mat4:
+        cache_key = (id(target_row), body_name)
+        if cache_key in body_world_cache:
+            return body_world_cache[cache_key]
+        position, rotation = get_body_state(body_name, target_row)
+        values = [list(value) for value in quat_matrix(rotation)]
+        values[3][:3] = list(position)
+        world = tuple(tuple(value) for value in values)
+        body_world_cache[cache_key] = world
         return world
 
     matrices = [identity_matrix() for _ in range(len(nodes))]
@@ -927,60 +1115,56 @@ def pose_node_world_matrices(model: MeshModel, row: JSON, joint_order: JSON, sou
 
     mapped_dof_nodes = 0
     renderable_bindings = binding.get("renderable_bindings", [])
-    body_rest_cache: dict[str, Mat4] = {}
+    body_names = [str(value) for value in joint_order.get("body_order", [])]
+    expected_body_pos = row.get("body_pos_m", [])
+    expected_body_rot = row.get("body_rot_xyzw", [])
+
+    def body_world_from_row(body_name: str, target_row: JSON) -> Mat4 | None:
+        if body_name not in body_names:
+            return None
+        index = body_names.index(body_name)
+        body_positions = target_row.get("body_pos_m", [])
+        body_rotations = target_row.get("body_rot_xyzw", [])
+        if index * 3 + 2 >= len(body_positions) or index * 4 + 3 >= len(body_rotations):
+            return None
+        matrix = [list(value) for value in quat_matrix(body_rotations[index * 4 : index * 4 + 4])]
+        matrix[3][:3] = [float(value) for value in body_positions[index * 3 : index * 3 + 3]]
+        return tuple(tuple(value) for value in matrix)
     
     for bind in renderable_bindings:
         node_idx = bind["node_index"]
         body_name = bind["body_name"]
         
-        body_rest_world = get_body_world(body_name, initial_row, body_rest_cache)
-        node_original_world = get_original_world(node_idx)
-        inv_rest = rigid_inverse(body_rest_world)
-        bind_local = mat_mul(node_original_world, inv_rest)
-        matrices[node_idx] = mat_mul(bind_local, get_body_world(body_name, row, body_world_cache))
+        computed_world = get_body_world(body_name, row)
+        current_body_world = body_world_from_row(body_name, row) or computed_world
+        if bind.get("mode") == "rigid_node":
+            rest_body_world = body_world_from_row(body_name, initial_row) or get_body_world(body_name, initial_row)
+            bind_local = mat_mul(get_original_world(node_idx), rigid_inverse(rest_body_world))
+            matrices[node_idx] = mat_mul(bind_local, current_body_world)
+        else:
+            matrices[node_idx] = current_body_world
 
         if body_name in joints_by_body and any(int(j.get("dof_dim", 0) or 0) > 0 for j in joints_by_body[body_name]):
             mapped_dof_nodes += 1
 
     max_pos_error = 0.0
-    expected_body_pos = row.get("body_pos_m", [])
-    if expected_body_pos:
-        body_names = [str(value) for value in joint_order.get("body_order", [])]
+    max_rot_error = 0.0
+    if expected_body_pos and expected_body_rot:
         for idx, body in enumerate(body_names):
-            if idx * 3 + 2 < len(expected_body_pos):
+            if idx * 3 + 2 < len(expected_body_pos) and idx * 4 + 3 < len(expected_body_rot):
                 expected = (float(expected_body_pos[idx*3]), float(expected_body_pos[idx*3+1]), float(expected_body_pos[idx*3+2]))
-                world = body_world_cache.get(body, identity_matrix())
-                actual = (world[0][3], world[1][3], world[2][3])
+                actual, actual_rotation = get_body_state(body, row)
                 dist = math.hypot(math.hypot(expected[0] - actual[0], expected[1] - actual[1]), expected[2] - actual[2])
-                if dist > max_pos_error:
-                    max_pos_error = dist
+                max_pos_error = max(max_pos_error, dist)
+                expected_rotation = quat_normalize_xyzw(expected_body_rot[idx * 4 : idx * 4 + 4])
+                dot = abs(sum(actual_rotation[index] * expected_rotation[index] for index in range(4)))
+                max_rot_error = max(max_rot_error, 2.0 * math.acos(max(-1.0, min(1.0, dot))))
 
-    # Find the root node to determine its original GLB world offset
-    glb_root_offset = (0.0, 0.0, 0.0)
-    for bind in binding.get("renderable_bindings", []):
-        body_name = bind.get("body_name", "")
-        if body_name and not body_by_name.get(body_name, {}).get("parent", ""):
-            root_node_idx = bind["node_index"]
-            root_orig_world = get_original_world(root_node_idx)
-            glb_root_offset = (root_orig_world[3][0], root_orig_world[3][1], root_orig_world[3][2])
-            break
-
-    print("GLB Root Offset in pose_node_world_matrices:", glb_root_offset)
-    # Add the GLB root offset to all matrices because root_pos_m is the ground projection
-    for i in range(len(matrices)):
-        m = matrices[i]
-        matrices[i] = (
-            m[0],
-            m[1],
-            m[2],
-            (m[3][0] + float(glb_root_offset[0]), m[3][1] + float(glb_root_offset[1]), m[3][2] + float(glb_root_offset[2]), m[3][3])
-        )
-
-    return matrices, mapped_dof_nodes, max_pos_error
+    return matrices, mapped_dof_nodes, max_pos_error, max_rot_error
 
 
-def posed_mesh_triangles(model: MeshModel, row: JSON, joint_order: JSON, source_rig: JSON, binding: JSON, initial_row: JSON) -> tuple[list[MeshTriangle], int, float]:
-    node_world, mapped_dof_nodes, max_pos_error = pose_node_world_matrices(model, row, joint_order, source_rig, binding, initial_row)
+def posed_mesh_triangles(model: MeshModel, row: JSON, joint_order: JSON, source_rig: JSON, binding: JSON, initial_row: JSON) -> tuple[list[MeshTriangle], int, float, float]:
+    node_world, mapped_dof_nodes, max_pos_error, max_rot_error = pose_node_world_matrices(model, row, joint_order, source_rig, binding, initial_row)
     skins = model.document.get("skins", [])
     triangles: list[MeshTriangle] = []
     for primitive in model.primitives:
@@ -1017,7 +1201,7 @@ def posed_mesh_triangles(model: MeshModel, row: JSON, joint_order: JSON, source_
                     color=primitive.color,
                 )
             )
-    return triangles, mapped_dof_nodes, max_pos_error
+    return triangles, mapped_dof_nodes, max_pos_error, max_rot_error
 
 
 def _vector_sub(left: Vec3, right: Vec3) -> Vec3:
@@ -1041,7 +1225,7 @@ def _normalize(vector: Vec3) -> Vec3:
     return vector[0] / length, vector[1] / length, vector[2] / length
 
 
-def camera_for_frame(contract: JSON, frame_id: int, root: Vec3) -> tuple[Vec3, Vec3, float]:
+def camera_for_frame(contract: JSON, frame_id: int, width: int, height: int) -> tuple[Vec3, Vec3, float]:
     samples = contract.get("camera_samples", [])
     if isinstance(samples, list):
         for sample in samples:
@@ -1050,20 +1234,206 @@ def camera_for_frame(contract: JSON, frame_id: int, root: Vec3) -> tuple[Vec3, V
             if int(sample.get("frame", sample.get("frame_id", -1))) == frame_id:
                 eye = sample.get("eye_m", sample.get("eye", []))
                 target = sample.get("target_m", sample.get("target", []))
-                if is_finite_sequence(eye, 3) and is_finite_sequence(target, 3):
-                    vfov = float(sample.get("fov_degrees", contract.get("fov_degrees", 60.0)))
-                    return tuple(float(value) for value in eye), tuple(float(value) for value in target), vfov
-    if "camera_eye" in contract and "camera_target" in contract:
-        eye = contract["camera_eye"]
-        target = contract["camera_target"]
-        if is_finite_sequence(eye, 3) and is_finite_sequence(target, 3):
-            vfov = float(contract.get("fov_degrees", 60.0))
-            return tuple(float(value) for value in eye), tuple(float(value) for value in target), vfov
-    
-    hfov = 60.0
-    aspect = 960.0 / 540.0
-    vfov = math.degrees(2.0 * math.atan(math.tan(math.radians(hfov) / 2.0) / aspect))
-    return (root[0], root[1] - 5.0, 3.0), (root[0], root[1], 1.0), vfov
+                fov = sample.get("fov_degrees")
+                if not is_finite_sequence(eye, 3) or not is_finite_sequence(target, 3) or fov is None or not math.isfinite(float(fov)):
+                    raise ValueError(f"invalid camera sample for frame {frame_id}")
+                axis = str(sample.get("fov_axis", ""))
+                if axis not in {"horizontal", "vertical"}:
+                    raise ValueError(f"invalid camera fov_axis for frame {frame_id}")
+                vfov = float(fov)
+                if axis == "horizontal":
+                    aspect = float(width) / max(float(height), 1.0)
+                    vfov = math.degrees(2.0 * math.atan(math.tan(math.radians(vfov) * 0.5) / aspect))
+                return tuple(float(value) for value in eye), tuple(float(value) for value in target), vfov
+    raise ValueError(f"scene contract camera sample missing for frame {frame_id}")
+
+
+def _linear_to_srgb_byte(value: float) -> int:
+    value = max(0.0, min(1.0, value))
+    srgb = 12.92 * value if value <= 0.0031308 else 1.055 * (value ** (1.0 / 2.4)) - 0.055
+    return max(0, min(255, round(srgb * 255.0)))
+
+
+def _ground_display_color(contract: JSON) -> tuple[int, int, int]:
+    ground = contract.get("ground", {}) if isinstance(contract.get("ground"), dict) else {}
+    base = ground.get("color_rgb", [0.017, 0.0153, 0.01275])
+    if not is_finite_sequence(base, 3):
+        base = [0.017, 0.0153, 0.01275]
+    lights = contract.get("lights", {}) if isinstance(contract.get("lights"), dict) else {}
+    weighted_intensity = 0.0
+    for light_name in ("distant", "dome"):
+        light = lights.get(light_name, {}) if isinstance(lights.get(light_name), dict) else {}
+        color = light.get("color_rgb", [1.0, 1.0, 1.0])
+        color_scale = sum(float(value) for value in color) / 3.0 if is_finite_sequence(color, 3) else 1.0
+        weighted_intensity += float(light.get("intensity", 0.0) or 0.0) * color_scale
+    # MimicKit's Isaac ground shader raises the albedo before the two scene
+    # lights are applied. The normalization keeps this deterministic offline.
+    albedo_add = float(ground.get("albedo_add", 10.0) or 10.0)
+    light_scale = weighted_intensity / 825.0 if weighted_intensity > 0.0 else 2.6
+    return tuple(_linear_to_srgb_byte(float(value) * albedo_add * light_scale) for value in base)
+
+
+def render_ground_scene(
+    width: int,
+    height: int,
+    eye: Vec3,
+    target: Vec3,
+    vfov: float,
+    contract: JSON,
+) -> tuple[bytes, bytes]:
+    forward = _normalize(_vector_sub(target, eye))
+    right = _normalize(_cross(forward, (0.0, 0.0, 1.0)))
+    up = _cross(right, forward)
+    scale = 0.5 * height / math.tan(math.radians(vfov) * 0.5)
+    mask = bytearray((0, 0, 0) * (width * height))
+    pixels = bytearray((8, 11, 17) * (width * height))
+    ground = contract.get("ground", {}) if isinstance(contract.get("ground"), dict) else {}
+    base_color = _ground_display_color(contract)
+    grid_spacing = max(0.01, float(ground.get("grid_spacing_m", 1.0) or 1.0))
+    major_spacing = max(grid_spacing, float(ground.get("major_grid_spacing_m", 5.0) or 5.0))
+    for y in range(height):
+        vertical = (height * 0.5 - (y + 0.5)) / scale
+        for x in range(width):
+            horizontal = ((x + 0.5) - width * 0.5) / scale
+            direction = (
+                forward[0] + right[0] * horizontal + up[0] * vertical,
+                forward[1] + right[1] * horizontal + up[1] * vertical,
+                forward[2] + right[2] * horizontal + up[2] * vertical,
+            )
+            if direction[2] >= -1e-9:
+                continue
+            distance = -eye[2] / direction[2]
+            if distance <= 0.0:
+                continue
+            offset = (y * width + x) * 3
+            mask[offset : offset + 3] = b"\xff\xff\xff"
+            hit_x = eye[0] + direction[0] * distance
+            hit_y = eye[1] + direction[1] * distance
+            footprint = max(0.012, min(0.12, distance / max(scale, 1.0) * 1.2))
+            minor_distance = min(
+                abs(hit_x - round(hit_x / grid_spacing) * grid_spacing),
+                abs(hit_y - round(hit_y / grid_spacing) * grid_spacing),
+            )
+            major_distance = min(
+                abs(hit_x - round(hit_x / major_spacing) * major_spacing),
+                abs(hit_y - round(hit_y / major_spacing) * major_spacing),
+            )
+            minor_strength = max(0.0, 1.0 - minor_distance / footprint)
+            major_strength = max(0.0, 1.0 - major_distance / (footprint * 1.5))
+            blend = max(0.42 * minor_strength, 0.62 * major_strength)
+            color = tuple(round(channel + (255 - channel) * blend) for channel in base_color)
+            pixels[offset : offset + 3] = bytes(color)
+    return bytes(mask), bytes(pixels)
+
+
+def render_ground_mask(width: int, height: int, eye: Vec3, target: Vec3, vfov: float) -> bytes:
+    mask, _ = render_ground_scene(width, height, eye, target, vfov, {})
+    return mask
+
+
+def _box_blur_mask(values: Sequence[float], width: int, height: int, radius: int) -> list[float]:
+    if radius <= 0:
+        return [float(value) for value in values]
+    horizontal = [0.0] * (width * height)
+    for y in range(height):
+        row = y * width
+        prefix = [0.0] * (width + 1)
+        for x in range(width):
+            prefix[x + 1] = prefix[x] + float(values[row + x])
+        for x in range(width):
+            low = max(0, x - radius)
+            high = min(width - 1, x + radius)
+            horizontal[row + x] = (prefix[high + 1] - prefix[low]) / (high - low + 1)
+    blurred = [0.0] * (width * height)
+    for x in range(width):
+        prefix = [0.0] * (height + 1)
+        for y in range(height):
+            prefix[y + 1] = prefix[y] + horizontal[y * width + x]
+        for y in range(height):
+            low = max(0, y - radius)
+            high = min(height - 1, y + radius)
+            blurred[y * width + x] = (prefix[high + 1] - prefix[low]) / (high - low + 1)
+    return blurred
+
+
+def apply_ground_shadows(
+    ground_rgb: bytes,
+    ground_mask: bytes,
+    triangles: Sequence[MeshTriangle],
+    *,
+    width: int,
+    height: int,
+    eye: Vec3,
+    target: Vec3,
+    fov: float,
+    contract: JSON,
+    opacity: float = 0.22,
+    blur_radius_px: int = 8,
+    blur_passes: int = 2,
+) -> bytes:
+    lights = contract.get("lights", {}) if isinstance(contract.get("lights"), dict) else {}
+    distant = lights.get("distant", {}) if isinstance(lights.get("distant"), dict) else {}
+    direction_value = distant.get("direction_world")
+    if distant.get("casts_shadows") is not True or not is_finite_sequence(direction_value, 3):
+        return ground_rgb
+    direction = _normalize(tuple(float(value) for value in direction_value))
+    if direction[2] >= -1e-9:
+        return ground_rgb
+    pixels = bytearray(ground_rgb)
+    shadowed: set[int] = set()
+    for triangle in triangles:
+        ground_points: list[Vec3] = []
+        for point in triangle.points:
+            distance = -max(0.0, float(point[2])) / direction[2]
+            ground_points.append(
+                (
+                    float(point[0]) + direction[0] * distance,
+                    float(point[1]) + direction[1] * distance,
+                    0.001,
+                )
+            )
+        projected = [_project(point, eye, target, fov, width, height) for point in ground_points]
+        if any(point is None for point in projected):
+            continue
+        points = [point for point in projected if point is not None]
+        min_x = max(0, int(math.floor(min(point[0] for point in points))))
+        max_x = min(width - 1, int(math.ceil(max(point[0] for point in points))))
+        min_y = max(0, int(math.floor(min(point[1] for point in points))))
+        max_y = min(height - 1, int(math.ceil(max(point[1] for point in points))))
+        area = _edge((points[0][0], points[0][1]), (points[1][0], points[1][1]), (points[2][0], points[2][1]))
+        if abs(area) < 1e-9:
+            continue
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                pixel = (x + 0.5, y + 0.5)
+                w0 = _edge((points[1][0], points[1][1]), (points[2][0], points[2][1]), pixel)
+                w1 = _edge((points[2][0], points[2][1]), (points[0][0], points[0][1]), pixel)
+                w2 = _edge((points[0][0], points[0][1]), (points[1][0], points[1][1]), pixel)
+                if (w0 >= 0 and w1 >= 0 and w2 >= 0) or (w0 <= 0 and w1 <= 0 and w2 <= 0):
+                    index = y * width + x
+                    if ground_mask[index * 3] >= 128:
+                        shadowed.add(index)
+    coverage: list[float] = [0.0] * (width * height)
+    for index in shadowed:
+        coverage[index] = 1.0
+    for _ in range(max(0, blur_passes)):
+        coverage = _box_blur_mask(coverage, width, height, max(0, blur_radius_px))
+    opacity = max(0.0, min(1.0, opacity))
+    for index, shadow_strength in enumerate(coverage):
+        if shadow_strength <= 1e-6 or ground_mask[index * 3] < 128:
+            continue
+        factor = 1.0 - opacity * min(1.0, shadow_strength)
+        offset = index * 3
+        pixels[offset : offset + 3] = bytes(round(channel * factor) for channel in pixels[offset : offset + 3])
+    return bytes(pixels)
+
+
+def compose_ground_rgb(rgb: bytes, silhouette: bytes, ground_mask: bytes, ground_rgb: bytes | None = None) -> bytes:
+    pixels = bytearray(rgb)
+    for offset in range(0, len(pixels), 3):
+        if ground_mask[offset] >= 128 and silhouette[offset] < 128:
+            pixels[offset : offset + 3] = ground_rgb[offset : offset + 3] if ground_rgb is not None else b"\x46\x45\x43"
+    return bytes(pixels)
 
 
 def _project(point: Vec3, eye: Vec3, target: Vec3, fov: float, width: int, height: int) -> tuple[float, float, float] | None:
@@ -1082,6 +1452,27 @@ def _edge(a: tuple[float, float], b: tuple[float, float], p: tuple[float, float]
     return (p[0] - a[0]) * (b[1] - a[1]) - (p[1] - a[1]) * (b[0] - a[0])
 
 
+def clip_polygon_above_ground(points: Sequence[Vec3], ground_z: float = 0.0) -> list[Vec3]:
+    output: list[Vec3] = []
+    for index, current in enumerate(points):
+        previous = points[index - 1]
+        current_inside = current[2] >= ground_z
+        previous_inside = previous[2] >= ground_z
+        if current_inside != previous_inside:
+            denominator = current[2] - previous[2]
+            ratio = (ground_z - previous[2]) / denominator if abs(denominator) > 1e-12 else 0.0
+            output.append(
+                (
+                    previous[0] + ratio * (current[0] - previous[0]),
+                    previous[1] + ratio * (current[1] - previous[1]),
+                    ground_z,
+                )
+            )
+        if current_inside:
+            output.append(current)
+    return output
+
+
 def rasterize_triangles(
     triangles: Sequence[MeshTriangle],
     transform: Mat4,
@@ -1097,35 +1488,41 @@ def rasterize_triangles(
     silhouette = bytearray((0, 0, 0) * (width * height))
     depth_buffer = [float("inf")] * (width * height)
     for triangle in triangles:
-        projected = [
-            _project(transform_point(transform, point), eye, target, fov, width, height)
-            for point in triangle.points
-        ]
-        if any(point is None for point in projected):
-            continue
-        points = [point for point in projected if point is not None]
-        min_x = max(0, int(math.floor(min(point[0] for point in points))))
-        max_x = min(width - 1, int(math.ceil(max(point[0] for point in points))))
-        min_y = max(0, int(math.floor(min(point[1] for point in points))))
-        max_y = min(height - 1, int(math.ceil(max(point[1] for point in points))))
-        area = _edge((points[0][0], points[0][1]), (points[1][0], points[1][1]), (points[2][0], points[2][1]))
-        if abs(area) < 1e-9:
-            continue
-        for y in range(min_y, max_y + 1):
-            for x in range(min_x, max_x + 1):
-                pixel = (x + 0.5, y + 0.5)
-                w0 = _edge((points[1][0], points[1][1]), (points[2][0], points[2][1]), pixel)
-                w1 = _edge((points[2][0], points[2][1]), (points[0][0], points[0][1]), pixel)
-                w2 = _edge((points[0][0], points[0][1]), (points[1][0], points[1][1]), pixel)
-                if (w0 >= 0 and w1 >= 0 and w2 >= 0) or (w0 <= 0 and w1 <= 0 and w2 <= 0):
-                    w0, w1, w2 = w0 / area, w1 / area, w2 / area
-                    depth = w0 * points[0][2] + w1 * points[1][2] + w2 * points[2][2]
-                    index = y * width + x
-                    if depth < depth_buffer[index]:
-                        depth_buffer[index] = depth
-                        offset = index * 3
-                        rgb[offset : offset + 3] = bytes(triangle.color)
-                        silhouette[offset : offset + 3] = b"\xff\xff\xff"
+        world_polygon = clip_polygon_above_ground([transform_point(transform, point) for point in triangle.points])
+        for polygon_index in range(1, len(world_polygon) - 1):
+            world_points = (world_polygon[0], world_polygon[polygon_index], world_polygon[polygon_index + 1])
+            edge_a = _vector_sub(world_points[1], world_points[0])
+            edge_b = _vector_sub(world_points[2], world_points[0])
+            normal = _normalize(_cross(edge_a, edge_b))
+            light = _normalize((-0.6, -0.8, 1.0))
+            illumination = 0.78 + 0.35 * abs(_dot(normal, light))
+            shaded_color = tuple(max(0, min(255, round(channel * illumination))) for channel in triangle.color)
+            projected = [_project(point, eye, target, fov, width, height) for point in world_points]
+            if any(point is None for point in projected):
+                continue
+            points = [point for point in projected if point is not None]
+            min_x = max(0, int(math.floor(min(point[0] for point in points))))
+            max_x = min(width - 1, int(math.ceil(max(point[0] for point in points))))
+            min_y = max(0, int(math.floor(min(point[1] for point in points))))
+            max_y = min(height - 1, int(math.ceil(max(point[1] for point in points))))
+            area = _edge((points[0][0], points[0][1]), (points[1][0], points[1][1]), (points[2][0], points[2][1]))
+            if abs(area) < 1e-9:
+                continue
+            for y in range(min_y, max_y + 1):
+                for x in range(min_x, max_x + 1):
+                    pixel = (x + 0.5, y + 0.5)
+                    w0 = _edge((points[1][0], points[1][1]), (points[2][0], points[2][1]), pixel)
+                    w1 = _edge((points[2][0], points[2][1]), (points[0][0], points[0][1]), pixel)
+                    w2 = _edge((points[0][0], points[0][1]), (points[1][0], points[1][1]), pixel)
+                    if (w0 >= 0 and w1 >= 0 and w2 >= 0) or (w0 <= 0 and w1 <= 0 and w2 <= 0):
+                        w0, w1, w2 = w0 / area, w1 / area, w2 / area
+                        depth = w0 * points[0][2] + w1 * points[1][2] + w2 * points[2][2]
+                        index = y * width + x
+                        if depth < depth_buffer[index]:
+                            depth_buffer[index] = depth
+                            offset = index * 3
+                            rgb[offset : offset + 3] = bytes(shaded_color)
+                            silhouette[offset : offset + 3] = b"\xff\xff\xff"
     return bytes(rgb), bytes(silhouette)
 
 
@@ -1226,7 +1623,15 @@ def write_comparison_sheet(
 ) -> JSON:
     if not pairs:
         return {"ok": False, "blocker": "comparison_pairs_missing", "file": str(out_file)}
-    selected = list(pairs[:sample_count])
+    if sample_count <= 1:
+        selected = [pairs[0]]
+    elif len(pairs) <= sample_count:
+        selected = list(pairs)
+    else:
+        selected = [
+            pairs[round(index * (len(pairs) - 1) / (sample_count - 1))]
+            for index in range(sample_count)
+        ]
     width = thumb_width * 2
     height = thumb_height * len(selected)
     canvas = bytearray((245, 245, 245) * (width * height))
@@ -1239,7 +1644,141 @@ def write_comparison_sheet(
                 source_start = y * thumb_width * 3
                 canvas[target_start : target_start + thumb_width * 3] = resized[source_start : source_start + thumb_width * 3]
     write_png(out_file, width, height, bytes(canvas))
-    return {"ok": True, "file": str(out_file), "pair_count": len(selected)}
+    return {
+        "ok": True,
+        "file": str(out_file),
+        "pair_count": len(selected),
+        "selected_frame_ids": [int(source_path.stem.split("_")[-1]) for source_path, _ in selected],
+    }
+
+
+def build_dynamic_comparison_mp4(
+    pairs: Sequence[tuple[Path, Path]],
+    out_dir: Path,
+    *,
+    fps: int,
+) -> JSON:
+    comparison_frames_dir = out_dir / "comparison_frames"
+    if comparison_frames_dir.exists():
+        shutil.rmtree(comparison_frames_dir)
+    comparison_frames_dir.mkdir(parents=True, exist_ok=True)
+    output_frames: list[Path] = []
+    frame_ids: list[int] = []
+    try:
+        for source_path, evih_path in pairs:
+            source_width, source_height, source_pixels = read_png(source_path)
+            evih_width, evih_height, evih_pixels = read_png(evih_path)
+            if (source_width, source_height) != (evih_width, evih_height):
+                raise ValueError("comparison frame dimensions do not match")
+            combined_width = source_width + evih_width
+            combined = bytearray(combined_width * source_height * 3)
+            for y in range(source_height):
+                source_start = y * source_width * 3
+                evih_start = y * evih_width * 3
+                target_start = y * combined_width * 3
+                combined[target_start : target_start + source_width * 3] = source_pixels[
+                    source_start : source_start + source_width * 3
+                ]
+                combined[
+                    target_start + source_width * 3 : target_start + combined_width * 3
+                ] = evih_pixels[evih_start : evih_start + evih_width * 3]
+            frame_id = int(source_path.stem.split("_")[-1])
+            frame_path = comparison_frames_dir / f"frame_{frame_id:06d}.png"
+            write_png(frame_path, combined_width, source_height, bytes(combined))
+            output_frames.append(frame_path)
+            frame_ids.append(frame_id)
+    except Exception as exc:
+        return {
+            "ok": False,
+            "blocker": "comparison_dynamic_frames_failed",
+            "error": f"{type(exc).__name__}: {exc}",
+            "file": str(out_dir / "mimickit_vs_evih_dynamic.mp4"),
+        }
+    media = create_mp4(output_frames, out_dir / "mimickit_vs_evih_dynamic.mp4", fps)
+    media.update(
+        comparison_frame_ids=frame_ids,
+        comparison_png_count=len(output_frames),
+        unique_decoded_frame_count=decoded_mp4_unique_frame_count(Path(str(media.get("file", "")))),
+        source_side="left",
+        evih_side="right",
+    )
+    if media.get("ok") and len(output_frames) != len(V3_REQUIRED_FRAME_IDS):
+        media["ok"] = False
+        media["blocker"] = "comparison_dynamic_frame_count_invalid"
+    if media.get("ok") and int(media.get("unique_decoded_frame_count", 0) or 0) < V3_MIN_UNIQUE_DYNAMIC_FRAMES:
+        media["ok"] = False
+        media["blocker"] = "comparison_dynamic_mp4_static"
+    return media
+
+
+def write_comparison_markdown(
+    out_file: Path,
+    *,
+    pairs: Sequence[tuple[Path, Path]],
+    comparison_sheet: Path,
+    visual_metric_report: JSON,
+    ground_metric_report: JSON,
+    rgb_metric_report: JSON,
+    visual_review: JSON,
+    dynamic_sequence_report: JSON | None = None,
+    comparison_mp4: Path | None = None,
+) -> JSON:
+    if not pairs or not comparison_sheet.is_file():
+        return {"ok": False, "blocker": "comparison_markdown_inputs_missing", "file": str(out_file)}
+    visual = visual_metric_report.get("metrics", {}) if isinstance(visual_metric_report.get("metrics"), dict) else {}
+    ground = ground_metric_report.get("metrics", {}) if isinstance(ground_metric_report.get("metrics"), dict) else {}
+    rgb = rgb_metric_report.get("metrics", {}) if isinstance(rgb_metric_report.get("metrics"), dict) else {}
+    dynamic = dynamic_sequence_report or {}
+    review = visual_review.get("review", {}) if isinstance(visual_review.get("review"), dict) else {}
+    review_checks = review.get("checks", {}) if isinstance(review.get("checks"), dict) else {}
+    lines = [
+        "# MimicKit vs EvihAnimation True-Mesh Review",
+        "",
+        f"![Comparison sheet]({comparison_sheet.name})",
+        "",
+        f"Dynamic side-by-side MP4: [`{comparison_mp4.name}`]({comparison_mp4.name})"
+        if comparison_mp4 and comparison_mp4.is_file()
+        else "Dynamic side-by-side MP4: **missing**",
+        "",
+        "## Automatic Evidence",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+        f"| Mean silhouette IoU | {float(visual.get('mean_silhouette_iou', 0.0)):.6f} |",
+        f"| P10 silhouette IoU | {float(visual.get('p10_silhouette_iou', 0.0)):.6f} |",
+        f"| Mean ground-mask IoU | {float(ground.get('mean_ground_mask_iou', 0.0)):.6f} |",
+        f"| P10 ground-mask IoU | {float(ground.get('p10_ground_mask_iou', 0.0)):.6f} |",
+        f"| RGB normalized MAE, report only | {float(rgb.get('mean_absolute_error_normalized', 1.0)):.6f} |",
+        f"| Dynamic sequence pass | {bool(dynamic.get('dynamic_sequence_pass'))} |",
+        f"| Dynamic output frames | {int(dynamic.get('required_frame_count', 0) or 0)} |",
+        f"| Evih MP4 unique decoded frames | {int(dynamic.get('mp4_unique_frame_count', 0) or 0)} |",
+        f"| MimicKit unique RGB/silhouette | {int(dynamic.get('source_rgb_unique_frame_count', 0) or 0)} / {int(dynamic.get('source_silhouette_unique_frame_count', 0) or 0)} |",
+        f"| Evih unique RGB/silhouette | {int(dynamic.get('evih_rgb_unique_frame_count', 0) or 0)} / {int(dynamic.get('evih_silhouette_unique_frame_count', 0) or 0)} |",
+        "",
+        "## Manual Review",
+        "",
+        f"Final visual review pass: **{bool(visual_review.get('visual_review_pass'))}**",
+        f"Review evidence matches current artifacts: **{bool(visual_review.get('evidence_matches'))}**",
+        "",
+    ]
+    lines.extend(
+        f"- [{'x' if bool(review_checks.get(name)) else ' '}] {name.replace('_', ' ')}"
+        for name in REQUIRED_VISUAL_REVIEW_CHECKS
+    )
+    lines.extend(["", "## Frame Pairs", "", "| Frame | MimicKit source | Evih replay |", "| ---: | --- | --- |"])
+    for source_path, evih_path in pairs:
+        frame_name = source_path.stem.split("_")[-1]
+        lines.append(f"| {frame_name} | `{source_path}` | `{evih_path}` |")
+    lines.extend(
+        [
+            "",
+            "This document is generated evidence. It never changes `visual_review.json` or approves the final gate.",
+            "",
+        ]
+    )
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text("\n".join(lines), encoding="utf-8")
+    return {"ok": True, "file": str(out_file), "pair_count": len(pairs)}
 
 
 def create_mp4(frames: Sequence[Path], out_file: Path, fps: int) -> JSON:
@@ -1273,28 +1812,44 @@ def create_mp4(frames: Sequence[Path], out_file: Path, fps: int) -> JSON:
     except Exception:
         stream = {}
     frame_count = int(stream.get("nb_read_frames", 0) or 0)
+    rate = str(stream.get("avg_frame_rate", "0/1"))
+    numerator, denominator = (rate.split("/", 1) + ["1"])[:2]
+    actual_fps = float(numerator) / max(float(denominator), 1.0)
+    expected_width, expected_height, _ = read_png(frames[0])
     report.update(
         command=command,
         returncode=process.returncode,
         stderr_tail=process.stderr[-2000:],
         ffprobe=stream,
         frame_count=frame_count,
+        actual_fps=actual_fps,
         size_bytes=out_file.stat().st_size if out_file.is_file() else 0,
     )
-    report["ok"] = bool(process.returncode == 0 and probe.returncode == 0 and frame_count == len(frames) and report["size_bytes"] > 0)
+    report["ok"] = bool(
+        process.returncode == 0
+        and probe.returncode == 0
+        and stream.get("codec_name") == "h264"
+        and int(stream.get("width", 0) or 0) == expected_width
+        and int(stream.get("height", 0) or 0) == expected_height
+        and math.isclose(actual_fps, float(fps), rel_tol=0.01, abs_tol=0.01)
+        and frame_count == len(frames)
+        and report["size_bytes"] > 0
+    )
     report["blocker"] = "" if report["ok"] else "mp4_probe_failed"
     return report
 
 
-def locate_reference_frames(manifest: JSON, manifest_path: Path, frame_ids: Sequence[int]) -> tuple[dict[int, Path], dict[int, Path]]:
+def locate_reference_frames(manifest: JSON, manifest_path: Path, frame_ids: Sequence[int]) -> tuple[dict[int, Path], dict[int, Path], dict[int, Path]]:
     bases = [manifest_path.parent]
     render_values = _recursive_values(manifest, {"render_dir", "frames_dir", "rgb_frames_dir"})
     render_dir = _first_existing_path(render_values, bases)
     rgb_dirs: list[Path] = []
     silhouette_dirs: list[Path] = []
+    ground_mask_dirs: list[Path] = []
     if render_dir:
         rgb_dirs.extend((render_dir, render_dir / "frames"))
         silhouette_dirs.extend((render_dir / "silhouettes", render_dir / "silhouette_frames"))
+        ground_mask_dirs.extend((render_dir / "ground_masks", render_dir / "ground_mask_frames"))
     silhouette_values = _recursive_values(manifest, {"silhouette_dir", "silhouette_frames_dir"})
     silhouette_candidate = _first_existing_path(silhouette_values, bases)
     if silhouette_candidate:
@@ -1311,7 +1866,8 @@ def locate_reference_frames(manifest: JSON, manifest_path: Path, frame_ids: Sequ
 
     rgb = {frame: path for frame in frame_ids if (path := find_frame(rgb_dirs, frame))}
     silhouettes = {frame: path for frame in frame_ids if (path := find_frame(silhouette_dirs, frame))}
-    return rgb, silhouettes
+    ground_masks = {frame: path for frame in frame_ids if (path := find_frame(ground_mask_dirs, frame))}
+    return rgb, silhouettes, ground_masks
 
 
 def _mask_stats(path: Path) -> tuple[int, int, set[int], tuple[float, float], tuple[int, int, int, int] | None]:
@@ -1394,6 +1950,90 @@ def build_visual_metric_report(
     }
 
 
+def build_ground_metric_report(source_masks: dict[int, Path], evih_masks: dict[int, Path]) -> JSON:
+    frame_ids = sorted(set(source_masks) & set(evih_masks))
+    rows: list[JSON] = []
+    for frame_id in frame_ids:
+        source_width, source_height, source_mask, _, _ = _mask_stats(source_masks[frame_id])
+        evih_width, evih_height, evih_mask, _, _ = _mask_stats(evih_masks[frame_id])
+        if (source_width, source_height) != (evih_width, evih_height):
+            continue
+        union = len(source_mask | evih_mask)
+        intersection = len(source_mask & evih_mask)
+        source_horizon = min((index // source_width for index in source_mask), default=source_height)
+        evih_horizon = min((index // evih_width for index in evih_mask), default=evih_height)
+        rows.append(
+            {
+                "frame_id": frame_id,
+                "ground_mask_iou": intersection / union if union else 0.0,
+                "horizon_error_height_ratio": abs(source_horizon - evih_horizon) / max(source_height, 1),
+            }
+        )
+    ious = [row["ground_mask_iou"] for row in rows]
+    horizons = [row["horizon_error_height_ratio"] for row in rows]
+    metrics = {
+        "mean_ground_mask_iou": sum(ious) / len(ious) if ious else 0.0,
+        "p10_ground_mask_iou": percentile(ious, 0.10),
+        "max_horizon_error_height_ratio": max(horizons) if horizons else 1.0,
+    }
+    checks = {
+        "all_requested_frames_paired": bool(source_masks) and len(rows) == len(source_masks) == len(evih_masks),
+        "mean_ground_mask_iou": metrics["mean_ground_mask_iou"] >= 0.95,
+        "p10_ground_mask_iou": metrics["p10_ground_mask_iou"] >= 0.90,
+        "horizon_error": metrics["max_horizon_error_height_ratio"] <= 0.02,
+    }
+    return {
+        "schema_version": 1,
+        "paired_frame_ids": frame_ids,
+        "per_frame": rows,
+        "metrics": metrics,
+        "checks": checks,
+        "scene_visual_metric_pass": all(checks.values()),
+        "blocker": "" if all(checks.values()) else "ground_scene_visual_metric_failed",
+    }
+
+
+def build_rgb_metric_report(source_rgb: dict[int, Path], evih_rgb: dict[int, Path]) -> JSON:
+    frame_ids = sorted(set(source_rgb) & set(evih_rgb))
+    rows: list[JSON] = []
+    for frame_id in frame_ids:
+        source_width, source_height, source_pixels = read_png(source_rgb[frame_id])
+        evih_width, evih_height, evih_pixels = read_png(evih_rgb[frame_id])
+        if (source_width, source_height) != (evih_width, evih_height):
+            continue
+        channel_count = len(source_pixels)
+        absolute_error = sum(abs(source_pixels[index] - evih_pixels[index]) for index in range(channel_count))
+        pixel_count = max(source_width * source_height, 1)
+        rows.append(
+            {
+                "frame_id": frame_id,
+                "mean_absolute_error_255": absolute_error / max(channel_count, 1),
+                "mean_absolute_error_normalized": absolute_error / max(channel_count * 255, 1),
+                "source_mean_rgb": [
+                    sum(source_pixels[channel::3]) / pixel_count
+                    for channel in range(3)
+                ],
+                "evih_mean_rgb": [
+                    sum(evih_pixels[channel::3]) / pixel_count
+                    for channel in range(3)
+                ],
+            }
+        )
+    errors = [float(row["mean_absolute_error_normalized"]) for row in rows]
+    return {
+        "schema_version": 1,
+        "report_only": True,
+        "paired_frame_ids": frame_ids,
+        "per_frame": rows,
+        "metrics": {
+            "mean_absolute_error_normalized": sum(errors) / len(errors) if errors else 1.0,
+            "p90_absolute_error_normalized": percentile(errors, 0.90),
+        },
+        "complete": bool(source_rgb) and len(rows) == len(source_rgb) == len(evih_rgb),
+        "blocker": "" if source_rgb and len(rows) == len(source_rgb) == len(evih_rgb) else "rgb_similarity_pairs_missing",
+    }
+
+
 def render_true_mesh(
     rows: Sequence[JSON],
     frame_ids: Sequence[int],
@@ -1416,102 +2056,59 @@ def render_true_mesh(
     }
     rgb_dir = out_dir / "frames"
     silhouette_dir = out_dir / "silhouettes"
+    ground_mask_dir = out_dir / "ground_masks"
     rgb_frames: list[Path] = []
     silhouette_frames: list[Path] = []
+    ground_mask_frames: list[Path] = []
     missing_rows: list[int] = []
     mesh_triangle_count = 0
     mapped_dof_node_count = 0
     max_body_pos_error_m = 0.0
+    max_body_rot_error_rad = 0.0
     for frame_id in frame_ids:
-        row = rows_by_frame.get(frame_id + 1)
+        row = rows_by_frame.get(frame_id)
         if row is None:
             missing_rows.append(frame_id)
             continue
-            
-        def _zup_to_yup(r: JSON) -> None:
-            pos = r.get("root_pos_m")
-            if pos:
-                r["root_pos_m"] = [float(pos[0]), float(pos[2]), -float(pos[1])]
-            
-            rot = r.get("root_rot_xyzw")
-            if rot:
-                rx = axis_angle_matrix([1.0, 0.0, 0.0], math.radians(-90.0))
-                rx_inv = axis_angle_matrix([1.0, 0.0, 0.0], math.radians(90.0))
-                
-                qx, qy, qz, qw = float(rot[0]), float(rot[1]), float(rot[2]), float(rot[3])
-                root_zup = (
-                    (1.0 - 2.0*qy*qy - 2.0*qz*qz, 2.0*qx*qy + 2.0*qz*qw, 2.0*qx*qz - 2.0*qy*qw, 0.0),
-                    (2.0*qx*qy - 2.0*qz*qw, 1.0 - 2.0*qx*qx - 2.0*qz*qz, 2.0*qy*qz + 2.0*qx*qw, 0.0),
-                    (2.0*qx*qz + 2.0*qy*qw, 2.0*qy*qz - 2.0*qx*qw, 1.0 - 2.0*qx*qx - 2.0*qy*qy, 0.0),
-                    (0.0, 0.0, 0.0, 1.0)
-                )
-                
-                root_yup = mat_mul(rx, mat_mul(root_zup, rx_inv))
-                m = root_yup
-                tr = m[0][0] + m[1][1] + m[2][2]
-                if tr > 0:
-                    S = math.sqrt(tr + 1.0) * 2
-                    qw = 0.25 * S
-                    qx = (m[1][2] - m[2][1]) / S
-                    qy = (m[2][0] - m[0][2]) / S
-                    qz = (m[0][1] - m[1][0]) / S
-                elif (m[0][0] > m[1][1]) and (m[0][0] > m[2][2]):
-                    S = math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2
-                    qw = (m[1][2] - m[2][1]) / S
-                    qx = 0.25 * S
-                    qy = (m[0][1] + m[1][0]) / S
-                    qz = (m[0][2] + m[2][0]) / S
-                elif m[1][1] > m[2][2]:
-                    S = math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2
-                    qw = (m[2][0] - m[0][2]) / S
-                    qx = (m[0][1] + m[1][0]) / S
-                    qy = 0.25 * S
-                    qz = (m[1][2] + m[2][1]) / S
-                else:
-                    S = math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2
-                    qw = (m[0][1] - m[1][0]) / S
-                    qx = (m[0][2] + m[2][0]) / S
-                    qy = (m[1][2] + m[2][1]) / S
-                    qz = 0.25 * S
-                r["root_rot_xyzw"] = [qx, qy, qz, qw]
-                
-        # Transform root_pos and root_rot from Z-up to Y-up
-        _zup_to_yup(row)
-        
-        # We also need to transform the initial_row
-        transformed_initial_row = dict(initial_row)
-        transformed_initial_row["root_pos_m"] = list(initial_row.get("root_pos_m", [0, 0, 0]))
-        transformed_initial_row["root_rot_xyzw"] = list(initial_row.get("root_rot_xyzw", [0, 0, 0, 1]))
-        _zup_to_yup(transformed_initial_row)
-
-        triangles, mapped_dof_nodes, frame_pos_error = posed_mesh_triangles(model, row, joint_order, source_rig, binding, transformed_initial_row)
+        triangles, mapped_dof_nodes, frame_pos_error, frame_rot_error = posed_mesh_triangles(model, row, joint_order, source_rig, binding, initial_row)
         max_body_pos_error_m = max(max_body_pos_error_m, frame_pos_error)
+        max_body_rot_error_rad = max(max_body_rot_error_rad, frame_rot_error)
         mesh_triangle_count = max(mesh_triangle_count, len(triangles))
         mapped_dof_node_count = max(mapped_dof_node_count, mapped_dof_nodes)
-        root = tuple(float(value) for value in row["root_pos_m"])
-        eye, target, fov = camera_for_frame(contract, frame_id, root)
+        eye, target, fov = camera_for_frame(contract, frame_id, width, height)
         rgb, silhouette = rasterize_triangles(
             triangles,
-            (
-                (1.0, 0.0, 0.0, 0.0),
-                (0.0, 0.0, -1.0, 0.0),
-                (0.0, 1.0, 0.0, 0.0),
-                (0.0, 0.0, 0.0, 1.0)
-            ),
+            identity_matrix(),
             width=width,
             height=height,
             eye=eye,
             target=target,
             fov=fov,
         )
+        ground_mask, ground_rgb = render_ground_scene(width, height, eye, target, fov, contract)
+        ground_rgb = apply_ground_shadows(
+            ground_rgb,
+            ground_mask,
+            triangles,
+            width=width,
+            height=height,
+            eye=eye,
+            target=target,
+            fov=fov,
+            contract=contract,
+        )
+        rgb = compose_ground_rgb(rgb, silhouette, ground_mask, ground_rgb)
         rgb_path = rgb_dir / f"frame_{frame_id:06d}.png"
         silhouette_path = silhouette_dir / f"frame_{frame_id:06d}.png"
+        ground_mask_path = ground_mask_dir / f"frame_{frame_id:06d}.png"
         write_png(rgb_path, width, height, rgb)
         write_png(silhouette_path, width, height, silhouette)
+        write_png(ground_mask_path, width, height, ground_mask)
         rgb_frames.append(rgb_path)
         silhouette_frames.append(silhouette_path)
+        ground_mask_frames.append(ground_mask_path)
     return {
-        "renderer": "evih_stdlib_glb_triangle_rasterizer_v2",
+        "renderer": "evih_stdlib_glb_triangle_rasterizer_v3",
         "pose_application_mode": "sidecar_root_and_mapped_joint_dof_glb_pose",
         "dof_pose_applied": mapped_dof_node_count > 0,
         "mapped_dof_node_count": mapped_dof_node_count,
@@ -1521,12 +2118,15 @@ def render_true_mesh(
         "rendered_frame_ids": [int(path.stem.split("_")[-1]) for path in rgb_frames],
         "rgb_frames": [str(path) for path in rgb_frames],
         "silhouette_frames": [str(path) for path in silhouette_frames],
+        "ground_mask_frames": [str(path) for path in ground_mask_frames],
         "rgb_png_count": len(rgb_frames),
         "silhouette_png_count": len(silhouette_frames),
+        "ground_mask_png_count": len(ground_mask_frames),
         "missing_replay_rows": missing_rows,
         "max_body_pos_error_m": max_body_pos_error_m,
-        "fk_compare_pass": max_body_pos_error_m <= 1e-6,
-        "render_pass": bool(mesh_triangle_count and mapped_dof_node_count > 0 and not missing_rows and len(rgb_frames) == len(frame_ids) and len(silhouette_frames) == len(frame_ids) and max_body_pos_error_m <= 1e-6),
+        "max_body_rot_error_rad": max_body_rot_error_rad,
+        "fk_compare_pass": max_body_pos_error_m <= 1e-6 and max_body_rot_error_rad <= 1e-5,
+        "render_pass": bool(mesh_triangle_count and mapped_dof_node_count > 0 and not missing_rows and len(rgb_frames) == len(frame_ids) and len(silhouette_frames) == len(frame_ids) and len(ground_mask_frames) == len(frame_ids) and max_body_pos_error_m <= 1e-6 and max_body_rot_error_rad <= 1e-5),
     }
 
 
@@ -1620,11 +2220,219 @@ def default_thresholds() -> JSON:
     }
 
 
-def validate_visual_review(path: Path | None) -> JSON:
+def _frame_set_sha256(frames: dict[int, Path]) -> str:
+    if not frames:
+        return ""
+    return stable_json_sha256(
+        {
+            "frames": [
+                {"frame_id": int(frame_id), "sha256": sha256_file(path)}
+                for frame_id, path in sorted(frames.items())
+            ]
+        }
+    )
+
+
+def decoded_mp4_unique_frame_count(path: Path) -> int:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg or not path.is_file():
+        return 0
+    process = subprocess.run(
+        [ffmpeg, "-v", "error", "-i", str(path), "-f", "framemd5", "-"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if process.returncode != 0:
+        return 0
+    return len(
+        {
+            line.rsplit(",", 1)[-1].strip()
+            for line in process.stdout.splitlines()
+            if line and not line.startswith("#") and "," in line
+        }
+    )
+
+
+def build_dynamic_sequence_report(
+    *,
+    frame_ids: Sequence[int],
+    source_rgb: dict[int, Path],
+    source_silhouettes: dict[int, Path],
+    evih_rgb: dict[int, Path],
+    evih_silhouettes: dict[int, Path],
+    media: JSON,
+) -> JSON:
+    required_ids = list(V3_REQUIRED_FRAME_IDS)
+
+    def unique_count(frames: dict[int, Path]) -> int:
+        return len({sha256_file(path) for path in frames.values() if path.is_file()})
+
+    counts = {
+        "source_rgb_unique_frame_count": unique_count(source_rgb),
+        "source_silhouette_unique_frame_count": unique_count(source_silhouettes),
+        "evih_rgb_unique_frame_count": unique_count(evih_rgb),
+        "evih_silhouette_unique_frame_count": unique_count(evih_silhouettes),
+    }
+    mp4_file = Path(str(media.get("file", "")))
+    mp4_unique_frame_count = decoded_mp4_unique_frame_count(mp4_file)
+    checks = {
+        "requested_frame_ids_exact": list(frame_ids) == required_ids,
+        "source_rgb_frame_ids_exact": sorted(source_rgb) == required_ids,
+        "source_silhouette_frame_ids_exact": sorted(source_silhouettes) == required_ids,
+        "evih_rgb_frame_ids_exact": sorted(evih_rgb) == required_ids,
+        "evih_silhouette_frame_ids_exact": sorted(evih_silhouettes) == required_ids,
+        "mp4_frame_count_exact": bool(media.get("ok")) and int(media.get("frame_count", 0) or 0) == len(required_ids),
+        "mp4_unique_frame_count_sufficient": mp4_unique_frame_count >= V3_MIN_UNIQUE_DYNAMIC_FRAMES,
+        **{
+            name.replace("_count", "_sufficient"): count >= V3_MIN_UNIQUE_DYNAMIC_FRAMES
+            for name, count in counts.items()
+        },
+    }
+    blocker = next((f"dynamic_sequence_failed:{name}" for name, passed in checks.items() if not passed), "")
+    return {
+        "schema_version": 1,
+        "required_frame_ids": required_ids,
+        "required_frame_count": len(required_ids),
+        "minimum_unique_dynamic_frames": V3_MIN_UNIQUE_DYNAMIC_FRAMES,
+        "mp4_unique_frame_count": mp4_unique_frame_count,
+        **counts,
+        "checks": checks,
+        "dynamic_sequence_pass": not blocker,
+        "blocker": blocker,
+    }
+
+
+def build_visual_review_evidence(
+    *,
+    mesh_reference_manifest_path: Path,
+    mesh_asset: Path,
+    contract: JSON,
+    comparison_sheet: Path,
+    comparison_mp4: Path,
+    source_rgb: dict[int, Path],
+    evih_rgb: dict[int, Path],
+) -> JSON:
+    return {
+        "schema_version": 1,
+        "mimickit_mesh_reference_manifest_sha256": sha256_file(mesh_reference_manifest_path),
+        "mesh_asset_sha256": sha256_file(mesh_asset),
+        "source_scene_contract_sha256": scene_contract_sha256(contract) if contract else "",
+        "comparison_sheet_sha256": sha256_file(comparison_sheet),
+        "comparison_mp4_sha256": sha256_file(comparison_mp4),
+        "source_rgb_frame_set_sha256": _frame_set_sha256(source_rgb),
+        "evih_rgb_frame_set_sha256": _frame_set_sha256(evih_rgb),
+    }
+
+
+def ensure_visual_review_template(path: Path, evidence: JSON) -> bool:
+    if path.is_file():
+        try:
+            current = read_json(path)
+        except Exception:
+            return False
+        checks = current.get("checks", {}) if isinstance(current.get("checks"), dict) else {}
+        current_evidence = current.get("evidence", {}) if isinstance(current.get("evidence"), dict) else {}
+        is_unreviewed = (
+            not bool(current.get("visual_review_pass"))
+            and not str(current.get("reviewer", "")).strip()
+            and not any(bool(value) for value in checks.values())
+        )
+        if current_evidence == evidence:
+            return False
+        if not is_unreviewed:
+            archive = path.with_name(f"{path.stem}.stale.{sha256_file(path)[:12]}{path.suffix}")
+            if not archive.is_file():
+                write_json(archive, current)
+    write_json(
+        path,
+        {
+            "schema_version": 2,
+            "visual_review_pass": False,
+            "checks": {name: False for name in REQUIRED_VISUAL_REVIEW_CHECKS},
+            "reviewer": "",
+            "reviewed_at_utc": "",
+            "evidence": evidence,
+            "notes": "Generated review template. Manual confirmation is required.",
+        },
+    )
+    return True
+
+
+FRAMEWORK_PROVENANCE_EXACT = {
+    "ai4animation_mode": "CAPTURE",
+    "actor_component": "ai4animation.Components.Actor.Actor",
+    "mesh_component": "ai4animation.Standalone.RigidNodeMesh.RigidNodeMesh",
+    "render_pipeline": "ai4animation.Standalone.RenderPipeline.RenderPipeline",
+    "silhouette_derivation": "renderpipeline_semantic_character_with_ground_depth_occluder",
+    "ground_mask_derivation": "complement_of_renderpipeline_semantic_character",
+    "mesh_mode": "rigid_node",
+    "rigid_node_update_mode": "actor_entity_world_dynamic_vertex_buffer",
+}
+FRAMEWORK_REQUIRED_CAPTURE_PASSES = {"blank", "character_only", "ground_only", "full_scene"}
+FRAMEWORK_PROVENANCE_ARTIFACTS = (
+    "framework_capture_script",
+    "ai4animation_core_module",
+    "entity_module",
+    "actor_module",
+    "rigid_node_mesh_module",
+    "standalone_module",
+    "render_pipeline_module",
+    "replay_module",
+    "basic_vertex_shader",
+    "grid_shader",
+    "mesh_asset",
+    "pose_dof_replay",
+    "body_world_replay",
+    "mesh_binding_contract",
+    "scene_contract",
+    "rigid_node_transform_report",
+)
+
+
+def validate_framework_renderer_provenance(
+    provenance: JSON,
+    expected_paths: dict[str, Path] | None = None,
+) -> JSON:
+    checks: JSON = {
+        f"{name}_exact": provenance.get(name) == value
+        for name, value in FRAMEWORK_PROVENANCE_EXACT.items()
+    }
+    capture_passes = provenance.get("capture_passes", [])
+    checks["capture_passes_exact"] = (
+        isinstance(capture_passes, list)
+        and set(str(value) for value in capture_passes) == FRAMEWORK_REQUIRED_CAPTURE_PASSES
+        and len(capture_passes) == len(FRAMEWORK_REQUIRED_CAPTURE_PASSES)
+    )
+    python_executable = Path(str(provenance.get("python_executable", "")))
+    checks["python_executable_exists"] = python_executable.is_file()
+    for name in FRAMEWORK_PROVENANCE_ARTIFACTS:
+        value = str(provenance.get(name, "")).strip()
+        path = Path(value) if value else None
+        declared_hash = str(provenance.get(f"{name}_sha256", "")).strip()
+        checks[f"{name}_exists"] = bool(path and path.is_file())
+        checks[f"{name}_sha256_matches"] = bool(
+            path and path.is_file() and declared_hash and declared_hash == sha256_file(path)
+        )
+        if expected_paths and name in expected_paths:
+            expected = expected_paths[name].resolve()
+            checks[f"{name}_matches_expected_path"] = bool(path and path.resolve() == expected)
+    passed = bool(provenance) and all(checks.values())
+    return {
+        "schema_version": 1,
+        "checks": checks,
+        "framework_renderer_provenance_valid": passed,
+        "blocker": "" if passed else "framework_renderer_provenance_invalid",
+    }
+
+
+def validate_visual_review(path: Path | None, expected_evidence: JSON | None = None) -> JSON:
     report: JSON = {
-        "schema_version": 2,
+        "schema_version": 3,
         "file": str(path) if path else "",
         "required_checks": list(REQUIRED_VISUAL_REVIEW_CHECKS),
+        "expected_evidence": expected_evidence or {},
+        "evidence_matches": False,
         "visual_review_pass": False,
         "blocker": "visual_review_missing_or_failed",
     }
@@ -1637,12 +2445,35 @@ def validate_visual_review(path: Path | None) -> JSON:
         return report
     checks = review.get("checks", {}) if isinstance(review.get("checks"), dict) else {}
     missing_or_failed = [name for name in REQUIRED_VISUAL_REVIEW_CHECKS if not bool(checks.get(name))]
+    reviewer_present = bool(str(review.get("reviewer", "")).strip())
+    reviewed_at_present = bool(str(review.get("reviewed_at_utc", "")).strip())
+    review_evidence = review.get("evidence", {}) if isinstance(review.get("evidence"), dict) else {}
+    expected = expected_evidence or {}
+    evidence_mismatches = [
+        name
+        for name, value in expected.items()
+        if review_evidence.get(name) != value
+    ]
+    evidence_matches = bool(expected) and not evidence_mismatches
     report.update(
         review=review,
         missing_or_failed_checks=missing_or_failed,
-        visual_review_pass=bool(review.get("visual_review_pass")) and not missing_or_failed,
+        reviewer_present=reviewer_present,
+        reviewed_at_present=reviewed_at_present,
+        evidence_mismatches=evidence_mismatches,
+        evidence_matches=evidence_matches,
+        visual_review_pass=(
+            bool(review.get("visual_review_pass"))
+            and not missing_or_failed
+            and reviewer_present
+            and reviewed_at_present
+            and evidence_matches
+        ),
     )
-    report["blocker"] = "" if report["visual_review_pass"] else "visual_review_missing_or_failed"
+    if report["visual_review_pass"]:
+        report["blocker"] = ""
+    elif (bool(review.get("visual_review_pass")) or reviewer_present or any(bool(value) for value in checks.values())) and not evidence_matches:
+        report["blocker"] = "visual_review_evidence_mismatch"
     return report
 
 
@@ -1681,9 +2512,10 @@ def build_true_mesh_replay(
     write_json(out_dir / "asset_structure_manifest.json", structure)
     write_json(out_dir / "mesh_binding_report.json", binding)
     write_json(out_dir / "scene_contract_compare_report.json", scene_report)
+    write_json(out_dir / "applied_scene_contract.json", scene_report.get("applied_scene_contract", {}))
     write_json(out_dir / "source_hash_compare_report.json", hash_report)
     if contract:
-        write_json(out_dir / "scene_contract_v2.json", contract)
+        write_json(out_dir / "scene_contract_v3.json", contract)
 
     preflight_blocker = first_blocker(
         [
@@ -1691,8 +2523,9 @@ def build_true_mesh_replay(
             (bool(package_report.get("ok")), str(package_report.get("blocker") or "mesh_package_sidecars_missing")),
             (bool(structure.get("ok")), str(structure.get("blocker") or "mesh_asset_structure_invalid")),
             (bool(binding.get("mesh_binding_pass")), str(binding.get("blocker") or "mesh_binding_incomplete")),
-            (True, ""), # Bypass scene contract compare
-            (True, ""), # Bypass source hash compare
+            (bool(package_report.get("data_binding_ok")), "body_world_replay_invalid"),
+            (bool(scene_report.get("scene_contract_compare_pass")), str(scene_report.get("blocker") or "scene_contract_compare_failed")),
+            (bool(hash_report.get("hash_match_pass")), str(hash_report.get("blocker") or "source_hash_mismatch")),
         ]
     )
     base: JSON = {
@@ -1707,16 +2540,22 @@ def build_true_mesh_replay(
         "source_scene_contract_sha256": scene_report.get("source_scene_contract_sha256", ""),
         "evih_scene_contract_sha256": scene_report.get("evih_scene_contract_sha256", ""),
         "source_hashes": hash_report.get("hashes", {}),
+        "data_binding_ok": bool(package_report.get("data_binding_ok")),
         "mesh_binding_pass": bool(binding.get("mesh_binding_pass")),
+        "fk_compare_pass": False,
         "scene_contract_compare_pass": bool(scene_report.get("scene_contract_compare_pass")),
+        "scene_visual_metric_pass": False,
         "visual_metric_pass": False,
+        "dynamic_sequence_pass": False,
         "visual_review_pass": False,
+        "media_ok": False,
         "evih_mesh_replay_pass": False,
         "blocker": preflight_blocker,
         "reports": {
             "asset_structure": str(out_dir / "asset_structure_manifest.json"),
             "mesh_binding": str(out_dir / "mesh_binding_report.json"),
             "scene_contract_compare": str(out_dir / "scene_contract_compare_report.json"),
+            "applied_scene_contract": str(out_dir / "applied_scene_contract.json"),
             "source_hash_compare": str(out_dir / "source_hash_compare_report.json"),
         },
     }
@@ -1727,23 +2566,75 @@ def build_true_mesh_replay(
 
     files = resolve_package_files(package_dir)
     rows = load_replay_rows(files["pose_dof_replay"])
+    body_rows = {int(row["frame"]): row for row in load_replay_rows(files["body_world_replay"])}
+    for row in rows:
+        body_row = body_rows.get(int(row["frame"]))
+        if body_row:
+            row["body_pos_m"] = body_row.get("body_pos_m", [])
+            row["body_rot_xyzw"] = body_row.get("body_rot_xyzw", [])
     row_validation = validate_replay_rows(rows, joint_order)
     source_rig = read_json(files["source_rig_asset_spec"])
     render_report = render_true_mesh(rows, frame_ids, mesh_asset, joint_order, contract, out_dir, width=width, height=height, source_rig=source_rig, binding=binding)
     rgb_frames = [Path(value) for value in render_report.get("rgb_frames", [])]
     media = create_mp4(rgb_frames, out_dir / "mesh_replay.mp4", fps)
-    source_rgb, source_silhouettes = locate_reference_frames(manifest, mesh_reference_manifest_path, frame_ids)
+    source_rgb, source_silhouettes, source_ground_masks = locate_reference_frames(manifest, mesh_reference_manifest_path, frame_ids)
+    evih_rgb = {int(path.stem.split("_")[-1]): path for path in (out_dir / "frames").glob("frame_*.png")}
     evih_silhouettes = {int(path.stem.split("_")[-1]): path for path in (out_dir / "silhouettes").glob("frame_*.png")}
+    evih_ground_masks = {int(path.stem.split("_")[-1]): path for path in (out_dir / "ground_masks").glob("frame_*.png")}
+    dynamic_sequence_report = build_dynamic_sequence_report(
+        frame_ids=frame_ids,
+        source_rgb=source_rgb,
+        source_silhouettes=source_silhouettes,
+        evih_rgb=evih_rgb,
+        evih_silhouettes=evih_silhouettes,
+        media=media,
+    )
     metric_report = build_visual_metric_report(source_silhouettes, evih_silhouettes, thresholds=thresholds or default_thresholds())
+    ground_metric_report = build_ground_metric_report(source_ground_masks, evih_ground_masks)
+    rgb_metric_report = build_rgb_metric_report(source_rgb, evih_rgb)
     comparison_pairs = [(source_rgb[frame], out_dir / "frames" / f"frame_{frame:06d}.png") for frame in frame_ids if frame in source_rgb]
     sheet_report = write_comparison_sheet(comparison_pairs, out_dir / "mimickit_mesh_vs_evih_mesh_sheet.png")
-    visual_review = validate_visual_review(visual_review_path)
+    comparison_media = build_dynamic_comparison_mp4(comparison_pairs, out_dir, fps=fps)
+    write_json(out_dir / "comparison_media_report.json", comparison_media)
+    if visual_review_path is None:
+        visual_review_path = out_dir / "visual_review.json"
+    expected_review_evidence = build_visual_review_evidence(
+        mesh_reference_manifest_path=mesh_reference_manifest_path,
+        mesh_asset=mesh_asset,
+        contract=contract,
+        comparison_sheet=out_dir / "mimickit_mesh_vs_evih_mesh_sheet.png",
+        comparison_mp4=out_dir / "mimickit_vs_evih_dynamic.mp4",
+        source_rgb=source_rgb,
+        evih_rgb=evih_rgb,
+    )
+    ensure_visual_review_template(visual_review_path, expected_review_evidence)
+    visual_review = validate_visual_review(visual_review_path, expected_review_evidence)
     write_json(out_dir / "visual_metric_report.json", metric_report)
+    write_json(out_dir / "scene_visual_metric_report.json", ground_metric_report)
+    write_json(out_dir / "rgb_metric_report.json", rgb_metric_report)
+    write_json(out_dir / "dynamic_sequence_report.json", dynamic_sequence_report)
     write_json(out_dir / "visual_review_report.json", visual_review)
+    markdown_report = write_comparison_markdown(
+        out_dir / "comparison_sheet.md",
+        pairs=comparison_pairs,
+        comparison_sheet=out_dir / "mimickit_mesh_vs_evih_mesh_sheet.png",
+        visual_metric_report=metric_report,
+        ground_metric_report=ground_metric_report,
+        rgb_metric_report=rgb_metric_report,
+        visual_review=visual_review,
+        dynamic_sequence_report=dynamic_sequence_report,
+        comparison_mp4=out_dir / "mimickit_vs_evih_dynamic.mp4",
+    )
     base["reports"].update(
         visual_metric=str(out_dir / "visual_metric_report.json"),
+        scene_visual_metric=str(out_dir / "scene_visual_metric_report.json"),
+        rgb_metric=str(out_dir / "rgb_metric_report.json"),
+        dynamic_sequence=str(out_dir / "dynamic_sequence_report.json"),
+        comparison_media=str(out_dir / "comparison_media_report.json"),
         visual_review=str(out_dir / "visual_review_report.json"),
         comparison_sheet=str(out_dir / "mimickit_mesh_vs_evih_mesh_sheet.png"),
+        comparison_mp4=str(out_dir / "mimickit_vs_evih_dynamic.mp4"),
+        comparison_markdown=str(out_dir / "comparison_sheet.md"),
     )
     base.update(
         row_validation=row_validation,
@@ -1751,12 +2642,42 @@ def build_true_mesh_replay(
         media=media,
         rgb_png_count=int(render_report.get("rgb_png_count", 0)),
         silhouette_png_count=int(render_report.get("silhouette_png_count", 0)),
+        ground_mask_png_count=int(render_report.get("ground_mask_png_count", 0)),
         mp4_file=str(out_dir / "mesh_replay.mp4"),
         mp4_ok=bool(media.get("ok")),
+        media_ok=bool(
+            media.get("ok")
+            and render_report.get("rgb_png_count") == len(frame_ids)
+            and render_report.get("silhouette_png_count") == len(frame_ids)
+            and render_report.get("ground_mask_png_count") == len(frame_ids)
+        ),
+        fk_compare_pass=bool(render_report.get("fk_compare_pass")),
+        scene_visual_metric_pass=bool(ground_metric_report.get("scene_visual_metric_pass")),
         visual_metric_pass=bool(metric_report.get("visual_metric_pass")),
+        dynamic_sequence_pass=bool(dynamic_sequence_report.get("dynamic_sequence_pass")),
         visual_review_pass=bool(visual_review.get("visual_review_pass")),
         comparison_sheet_pass=bool(sheet_report.get("ok")),
+        comparison_mp4_pass=bool(comparison_media.get("ok")),
+        comparison_markdown_pass=bool(markdown_report.get("ok")),
+        visual_review_evidence=expected_review_evidence,
     )
+    software_geometry_blocker = first_blocker(
+        [
+            (bool(row_validation.get("ok")), "replay_sidecar_validation_failed"),
+            (bool(render_report.get("fk_compare_pass")), "fk_compare_failed"),
+            (bool(render_report.get("dof_pose_applied")), "mesh_dof_pose_not_applied"),
+            (bool(render_report.get("render_pass")), "evih_mesh_render_failed"),
+            (bool(media.get("ok")), str(media.get("blocker") or "evih_mesh_mp4_invalid")),
+            (bool(base.get("media_ok")), "evih_mesh_media_incomplete"),
+            (bool(dynamic_sequence_report.get("dynamic_sequence_pass")), str(dynamic_sequence_report.get("blocker") or "evih_dynamic_sequence_failed")),
+            (bool(ground_metric_report.get("scene_visual_metric_pass")), str(ground_metric_report.get("blocker") or "ground_scene_visual_metric_failed")),
+            (bool(metric_report.get("visual_metric_pass")), str(metric_report.get("blocker") or "silhouette_visual_metric_failed")),
+            (bool(sheet_report.get("ok")), str(sheet_report.get("blocker") or "comparison_sheet_failed")),
+            (bool(comparison_media.get("ok")), str(comparison_media.get("blocker") or "comparison_dynamic_mp4_failed")),
+        ]
+    )
+    base["software_geometry_replay_pass"] = not software_geometry_blocker
+    base["software_geometry_blocker"] = software_geometry_blocker
     final_blocker = first_blocker(
         [
             (bool(row_validation.get("ok")), "replay_sidecar_validation_failed"),
@@ -1764,10 +2685,16 @@ def build_true_mesh_replay(
             (bool(render_report.get("dof_pose_applied")), "mesh_dof_pose_not_applied"),
             (bool(render_report.get("render_pass")), "evih_mesh_render_failed"),
             (bool(media.get("ok")), str(media.get("blocker") or "evih_mesh_mp4_invalid")),
+            (bool(base.get("media_ok")), "evih_mesh_media_incomplete"),
+            (bool(dynamic_sequence_report.get("dynamic_sequence_pass")), str(dynamic_sequence_report.get("blocker") or "evih_dynamic_sequence_failed")),
             (bool(source_rgb) and len(source_rgb) == len(frame_ids), "mimickit_rgb_frames_missing"),
             (bool(source_silhouettes) and len(source_silhouettes) == len(frame_ids), "mimickit_silhouette_frames_missing"),
+            (bool(source_ground_masks) and len(source_ground_masks) == len(frame_ids), "mimickit_ground_masks_missing"),
+            (bool(ground_metric_report.get("scene_visual_metric_pass")), str(ground_metric_report.get("blocker") or "ground_scene_visual_metric_failed")),
             (bool(metric_report.get("visual_metric_pass")), str(metric_report.get("blocker") or "silhouette_visual_metric_failed")),
             (bool(sheet_report.get("ok")), str(sheet_report.get("blocker") or "comparison_sheet_failed")),
+            (bool(comparison_media.get("ok")), str(comparison_media.get("blocker") or "comparison_dynamic_mp4_failed")),
+            (bool(markdown_report.get("ok")), str(markdown_report.get("blocker") or "comparison_markdown_failed")),
             (bool(visual_review.get("visual_review_pass")), str(visual_review.get("blocker") or "visual_review_missing_or_failed")),
         ]
     )
@@ -1791,7 +2718,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--true-mesh", action="store_true", help="Enable strict GLB true-mesh replay.")
     parser.add_argument("--mesh-asset", type=Path, help="Exact MimicKit-exported GLB/GLTF asset.")
     parser.add_argument("--mesh-reference-manifest", type=Path, help="Passing MimicKit mesh_reference_manifest.json.")
-    parser.add_argument("--scene-contract", type=Path, help="Optional explicit scene_contract_v2.json.")
+    parser.add_argument("--scene-contract", type=Path, help="Explicit strict scene_contract_v3.json for true-mesh replay.")
     parser.add_argument("--visual-review", type=Path, help="Required human visual_review.json for final true-mesh pass.")
     parser.add_argument("--mean-silhouette-iou-min", type=float, default=0.90)
     parser.add_argument("--p10-silhouette-iou-min", type=float, default=0.80)
