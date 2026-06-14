@@ -104,22 +104,24 @@ class SkinnedMesh:
             raylib_mesh.indices = ffi.cast(
                 "unsigned short*", triangles.buffer_info()[0]
             )
-            raylib_mesh.boneIds = ffi.cast("unsigned char*", bone_ids.buffer_info()[0])
+            raylib_mesh.boneIndices = ffi.cast("unsigned char*", bone_ids.buffer_info()[0])
             raylib_mesh.boneWeights = ffi.cast("float*", bone_weights.buffer_info()[0])
             raylib_mesh.boneCount = boneCount
             raylib_mesh.vaoId = 0
-
-            # Allocate bone matrices
-            raylib_mesh.boneMatrices = MemAlloc(boneCount * ffi.sizeof(Matrix()))
-            for i in range(boneCount):
-                raylib_mesh.boneMatrices[i] = MatrixIdentity()
 
             # Upload mesh with dynamic flag for bone updates
             UploadMesh(ffi.addressof(raylib_mesh), True)
 
             # Create Model for this mesh
             raylib_model = load_model_from_mesh(raylib_mesh)
-            raylib_model.materials[0].maps[MATERIAL_MAP_DIFFUSE].color = WHITE
+            
+            # Allocate bone matrices (Moved to Model in raylib 6.0)
+            import pyray
+            raylib_model.boneMatrices = pyray.ffi.cast("struct Matrix *", MemAlloc(boneCount * pyray.ffi.sizeof(Matrix())))
+            for i in range(boneCount):
+                raylib_model.boneMatrices[i] = MatrixIdentity()
+            for m in range(raylib_model.materialCount):
+                raylib_model.materials[m].maps[pyray.MATERIAL_MAP_DIFFUSE].color = pyray.WHITE
 
             texture = _create_texture_from_image(getattr(mesh, "Image", None))
             if texture is not None:
@@ -133,11 +135,10 @@ class SkinnedMesh:
             self.Models.append(raylib_model)
 
             # Cache numpy view of bone matrices for efficient updates
-            gpu_mesh = raylib_model.meshes[0]
             matView = np.frombuffer(
-                ffi.buffer(gpu_mesh.boneMatrices, gpu_mesh.boneCount * ffi.sizeof(Matrix())),
+                pyray.ffi.buffer(raylib_model.boneMatrices, boneCount * pyray.ffi.sizeof(Matrix())),
                 dtype=np.float32,
-            ).reshape(gpu_mesh.boneCount, 4, 4)
+            ).reshape(boneCount, 4, 4)
             self.BoneMatrixViews.append(matView)
 
         print(

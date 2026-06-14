@@ -21,7 +21,7 @@ if MOTIONBRICKS_ROOT_SYS not in sys.path:
 
 from ai4animation.AI4Animation import AI4Animation
 from ai4animation.Math import Vector3, Transform, Quaternion
-from ai4animation.Components.MeshRenderer import MeshRenderer
+from ai4animation.Components.Actor import Actor
 import raylib as rl
 import pyray as pr
 import mujoco
@@ -46,19 +46,11 @@ class InteractiveApp:
         finally:
             os.chdir(original_cwd)
         
-        # Raylib Mesh Entities
-        self.mesh_entities = []
+        # Raylib Mesh Entities -> Replaced by Native Evih Actor
+        self.Actor = None
         
-        # Load Evih mesh metadata (shared from replay demo)
-        self.geom_types = np.load("evih_geom_types.npy")
-        self.geom_sizes = np.load("evih_geom_sizes.npy")
-        self.geom_groups = np.load("evih_geom_groups.npy")
-        import json
-        with open("geom_mesh_names.json", "r") as f:
-            self.geom_mesh_names = json.load(f)
-        with open("geom_colors.json", "r") as f:
-            self.geom_colors = json.load(f)
-            
+        # We transform from MuJoCo space (Z-up) to Evih Space (Y-up)
+        # using the exact mapping used in the interactive traces to align with the visualizer.
         self.T_m_to_e = np.array([
             [0, 1, 0],
             [0, 0, 1],
@@ -66,35 +58,38 @@ class InteractiveApp:
         ], dtype=np.float32)
 
     def Start(self):
-        AI4Animation.Standalone.Camera.Mode = 4 # Exact Trajectory Match Mode
-        AI4Animation.Standalone.Camera.Camera.fovy = 34.0
-        
-        # Disable backface culling
-        rl.rlDisableBackfaceCulling()
-        
-        for i, mesh_name in enumerate(self.geom_mesh_names):
-            if self.geom_groups[i] != 1:
-                self.mesh_entities.append((i, None))
-                continue
-                
-            if mesh_name:
-                obj_path = f"meshes_mujoco/Geom_{i}.glb"
-                if not os.path.exists(obj_path):
-                    print(f"Warning: Mesh {obj_path} not found.")
-                    self.mesh_entities.append((i, None))
-                    continue
-                
-                model = rl.LoadModel(obj_path.encode('utf-8'))
-                entity = AI4Animation.Scene.AddEntity(f"Geom_{i}")
-                c = self.geom_colors[i]
-                color = (int(c[0]), int(c[1]), int(c[2]), int(c[3]))
-                entity.AddComponent(MeshRenderer, model, color)
-                self.mesh_entities.append((i, entity))
-            else:
-                self.mesh_entities.append((i, None))
+        # Load the synthesized skinned GLB via native Evih Actor
+        glb_path = os.path.join(os.getcwd(), "g1_skinned.glb")
+        if not os.path.exists(glb_path):
+            print(f"ERROR: {glb_path} not found. Please run build_g1_skinned.py first.")
+            sys.exit(1)
+            
+        # Get bone names from the GLB or use None to auto-detect
+        self.Actor = AI4Animation.Scene.AddEntity("Actor").AddComponent(Actor, glb_path, None, True)
                 
         # Initialize inference model state
         self.demo_agent.full_agent.reset()
+        
+        if self.Actor and self.Actor.Button_Skeleton:
+            self.Actor.Button_Skeleton.Active = True
+            
+        # Fix Camera to follow the robot properly without blend lag
+        if self.Actor and len(self.Actor.Entities) > 1:
+            def exact_chase_camera_update():
+                target_pos = self.Actor.Entities[1].GetPosition()
+                cam = AI4Animation.Standalone.Camera.Camera
+                # In Raylib struct, we must create a new Vector3 or set fields.
+                import pyray
+                cam.position = pyray.Vector3(target_pos[0], target_pos[1] + 2.0, target_pos[2] + 3.5)
+                cam.target = pyray.Vector3(target_pos[0], target_pos[1] + 1.0, target_pos[2])
+                cam.up = pyray.Vector3(0.0, 1.0, 0.0)
+            
+            AI4Animation.Standalone.Camera.Update = exact_chase_camera_update
+            
+        # Make the mesh highly visible (actually modify the material color!)
+        if hasattr(self.Actor, 'SkinnedMesh') and self.Actor.SkinnedMesh:
+            for model in self.Actor.SkinnedMesh.Models:
+                model.materials[0].maps[rl.MATERIAL_MAP_ALBEDO].color = pr.BLUE
 
     def get_raylib_key_states(self):
         # Map Raylib keys to the dictionary expected by WASD_controller
@@ -185,46 +180,55 @@ class InteractiveApp:
                 self.demo_agent.controller.get_controller_dt() * self.args.generate_dt
             )
 
-        # 5. Forward Kinematics to update meshes
-        mujoco.mj_forward(self.demo_agent.mj_model, self.demo_agent.mj_data)
+        # 5. Forward Kinematics
+        mujoco.mj_kinematics(self.demo_agent.mj_model, self.demo_agent.mj_data)
         
-        for i in range(len(self.mesh_entities)):
-            if self.mesh_entities[i][1] is not None:
-                p_m = self.demo_agent.mj_data.geom_xpos[i]
-                R_m = self.demo_agent.mj_data.geom_xmat[i].reshape(3, 3)
+        # 6. Apply to Native Actor
+        if self.Actor:
+            num_bones = self.Actor.GetBoneCount()
+            transforms = Transform.Identity(num_bones)
+            
+            for i in range(min(num_bones, self.demo_agent.mj_model.nbody)):
+                p_m = self.demo_agent.mj_data.xpos[i]
+                R_m = self.demo_agent.mj_data.xmat[i].reshape(3, 3)
                 
                 # Transform to Evih space
                 p_e = self.T_m_to_e @ p_m
                 R_e = self.T_m_to_e @ R_m @ self.T_m_to_e.T
                 
-                idx, entity = self.mesh_entities[i]
-                transform = Transform.Identity()
-                transform[:3, :3] = R_e
-                transform[:3, 3] = p_e
-                entity.SetTransform(transform)
+                # Build native transform
+                transforms[i] = Transform.TR(p_e, R_e)
+                
+            # Evih camera follows the root
+            root_pos_e = transforms[0][:3, 3] # Pelvis position
+            # Add offset
+            cam_pos_e = root_pos_e + np.array([0.0, 2.0, 3.5])
+            cam_lookat_e = root_pos_e + np.array([0.0, 1.0, 0.0])
+            
+            # Convert to PyRay vectors
+            cam_pos_pr = pr.Vector3(float(cam_pos_e[0]), float(cam_pos_e[1]), float(cam_pos_e[2]))
+            cam_lookat_pr = pr.Vector3(float(cam_lookat_e[0]), float(cam_lookat_e[1]), float(cam_lookat_e[2]))
+            
+            AI4Animation.Standalone.Camera.Camera.position = cam_pos_pr
+            AI4Animation.Standalone.Camera.Camera.target = cam_lookat_pr
+                
+            self.Actor.SetTransforms(transforms)
+        
+        if hasattr(self, 'args') and self.args.auto_record:
+            if not hasattr(self, 'qpos_history'):
+                self.qpos_history = []
+            self.qpos_history.append(qpos.copy())
 
-        # Chase Camera Logic: Track the Pelvis
-        # We can extract the Pelvis from prev_qpos (since the controller caches it)
-        # or from d.subtree_com[1]
-        pelvis_pos_m = self.demo_agent.mj_data.subtree_com[1]
-        pelvis_pos_e = self.T_m_to_e @ pelvis_pos_m
-        
-        # Basic Chase Cam
-        cam = AI4Animation.Standalone.Camera.Camera
-        cam.target.x, cam.target.y, cam.target.z = pelvis_pos_e
-        
-        # Maintain offset relative to target
-        cam.position.x = cam.target.x + 3.0
-        cam.position.y = cam.target.y + 1.5
-        cam.position.z = cam.target.z
-        
         if self.args.auto_record:
             os.makedirs("evih_headless_frames", exist_ok=True)
             rl.TakeScreenshot(bytes(f"evih_headless_frames/frame_{self.current_step:04d}.png", "utf-8"))
+            if self.current_step >= self.args.max_steps:
+                np.save("interactive_qpos_latest.npy", np.array(self.qpos_history))
+                AI4Animation.Standalone.Exit()
 
     def Draw(self):
-        AI4Animation.Draw.Text("MotionBricks Interactive Demo [WASD Control]", 0.05, 0.05, color=AI4Animation.Color.WHITE)
-        AI4Animation.Draw.Text("Green: Evih True-Mesh (PyTorch Inference)", 0.05, 0.10, color=AI4Animation.Color.GREEN)
+        AI4Animation.Draw.Text("MotionBricks Native Integration [WASD Control]", 0.05, 0.05, color=AI4Animation.Color.BLACK)
+        AI4Animation.Draw.Text("EvihAnimation Actor rendering Skinned G1 Mesh", 0.05, 0.10, color=AI4Animation.Color.BLACK)
 
     def GUI(self):
         pass
